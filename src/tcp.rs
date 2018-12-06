@@ -1,3 +1,4 @@
+use super::fs::Fs;
 use mio::*;
 use mio::net::{TcpListener, TcpStream};
 use std::io::{Read, Write};
@@ -37,6 +38,7 @@ fn tcp_test() {
 
     let start = Instant::now();
     let timeout = Duration::from_millis(10);
+    let fs = Fs::new();
     loop {
         poll.poll(&mut events, None).unwrap();
         for event in events.iter() {
@@ -46,7 +48,7 @@ fn tcp_test() {
             match event.token() {
                 SERVER_ACCEPT => {
                     let (handler, addr) = server.accept().unwrap();
-                    println!("accept from addr: {}", &addr);
+                    fs.clone().println(format!("accept from addr: {}", &addr)).unwrap();
                     poll.register(&handler, SERVER, Ready::readable() | Ready::writable(), PollOpt::edge()).unwrap();
                     server_handler = Some(handler);
                 }
@@ -55,7 +57,7 @@ fn tcp_test() {
                     if event.readiness().is_writable() {
                         if let Some(ref mut handler) = &mut server_handler {
                             handler.write(SERVER_HELLO).unwrap();
-                            println!("server wrote");
+                            fs.clone().println("server wrote".to_string()).unwrap();
                         }
                     }
                     if event.readiness().is_readable() {
@@ -64,7 +66,7 @@ fn tcp_test() {
                             match handler.read_exact(&mut hello) {
                                 Ok(_) => {
                                     assert_eq!(CLIENT_HELLO, &hello);
-                                    println!("server received");
+                                    fs.clone().println("server received".to_string()).unwrap();
                                 }
                                 _ => continue
                             }
@@ -74,14 +76,14 @@ fn tcp_test() {
                 CLIENT => {
                     if event.readiness().is_writable() {
                         client.write(CLIENT_HELLO).unwrap();
-                        println!("client wrote");
+                        fs.clone().println("client wrote".to_string()).unwrap();
                     }
                     if event.readiness().is_readable() {
                         let mut hello = [0; 4];
                         match client.read_exact(&mut hello) {
                             Ok(_) => {
                                 assert_eq!(SERVER_HELLO, &hello);
-                                println!("client received");
+                                fs.clone().println("client received".to_string()).unwrap();
                             }
                             _ => continue
                         }

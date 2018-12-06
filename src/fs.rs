@@ -1,12 +1,12 @@
 use std::sync::mpsc::{Sender, Receiver, channel, SendError};
 
 #[derive(Clone)]
-struct Fs {
+pub struct Fs {
     task_sender: Sender<Task>,
 }
 
 impl Fs {
-    fn new() -> Self {
+    pub fn new() -> Self {
         let (sender, receiver) = channel();
         std::thread::spawn(move || {
             loop {
@@ -26,12 +26,12 @@ impl Fs {
         Fs { task_sender: sender }
     }
 
-    fn println(&self, string: &str) -> Result<(), SendError<Task>> {
-        self.task_sender.send(Task::Println(string.to_string()))
+    pub fn println(&self, string: String) -> Result<(), SendError<Task>> {
+        self.task_sender.send(Task::Println(string))
     }
 }
 
-enum Task {
+pub enum Task {
     Exit,
     Println(String),
 }
