@@ -5,6 +5,9 @@ mod tcp;
 mod fs;
 
 #[cfg(test)]
+mod poll_timeout;
+
+#[cfg(test)]
 mod tests {
     #[test]
     fn it_works() {

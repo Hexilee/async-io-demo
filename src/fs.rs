@@ -1,4 +1,4 @@
-use std::sync::mpsc::{Sender, Receiver, channel};
+use std::sync::mpsc::{Sender, Receiver, channel, SendError};
 
 #[derive(Clone)]
 struct Fs {
@@ -24,6 +24,10 @@ impl Fs {
             }
         });
         Fs { task_sender: sender }
+    }
+
+    fn println(&self, string: &str) -> Result<(), SendError<Task>> {
+        self.task_sender.send(Task::Print(string.to_string()))
     }
 }
 
