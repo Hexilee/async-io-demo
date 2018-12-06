@@ -13,7 +13,7 @@ impl Fs {
                 match receiver.recv() {
                     Ok(task) => {
                         match task {
-                            Task::Print(ref string) => println!("{}", string),
+                            Task::Println(ref string) => println!("{}", string),
                             Task::Exit => return
                         }
                     },
@@ -27,12 +27,12 @@ impl Fs {
     }
 
     fn println(&self, string: &str) -> Result<(), SendError<Task>> {
-        self.task_sender.send(Task::Print(string.to_string()))
+        self.task_sender.send(Task::Println(string.to_string()))
     }
 }
 
 enum Task {
     Exit,
-    Print(String),
+    Println(String),
 }
 
