@@ -1,3 +1,6 @@
+#![feature(fnbox)]
+
+
 #[cfg(test)]
 mod tcp;
 

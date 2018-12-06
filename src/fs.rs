@@ -1,6 +1,7 @@
 use std::sync::mpsc::{Sender, channel};
 use std::fs::File;
 use std::io::Read;
+use std::boxed::FnBox;
 
 #[derive(Clone)]
 pub struct Fs {
@@ -51,7 +52,8 @@ impl Fs {
                             Task::Exit => {
                                 result_sender
                                     .clone()
-                                    .send(TaskResult::Exit);
+                                    .send(TaskResult::Exit)
+                                    .unwrap();
                                 return;
                             }
                         }
@@ -82,8 +84,8 @@ impl Fs {
     }
 }
 
-type FileCallback = Box<FnOnce(File) + Send>;
-type StringCallback = Box<FnOnce(String) + Send>;
+type FileCallback = Box<FnBox(File) + Send>;
+type StringCallback = Box<FnBox(String) + Send>;
 
 pub enum Task {
     Exit,
@@ -107,6 +109,7 @@ fn test_fs() {
         fs.clone().read_to_string(file, Box::new(move |value| {
             assert_eq!(TEST_FILE_VALUE, &value);
             fs.clone().println(value);
+            fs.close();
         }))
-    }))
+    }));
 }
