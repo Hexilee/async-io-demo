@@ -1,6 +1,6 @@
-use std::sync::mpsc::{Sender, channel, SendError};
+use std::sync::mpsc::{Sender, channel};
 use std::fs::File;
-use std::io::{self, Read, Write};
+use std::io::Read;
 
 #[derive(Clone)]
 pub struct Fs {
@@ -37,21 +37,16 @@ impl Fs {
                             Task::Open(path, callback) => {
                                 result_sender
                                     .clone()
-                                    .send(TaskResult::Open(File::open(path), callback))
+                                    .send(TaskResult::Open(File::open(path).unwrap(), callback))
                                     .unwrap();
                             }
                             Task::ReadToString(mut file, callback) => {
                                 let mut value = String::new();
-                                match file.read_to_string(&mut value) {
-                                    Ok(_) => result_sender
-                                        .clone()
-                                        .send(TaskResult::ReadToString(Ok(value), callback))
-                                        .unwrap(),
-                                    Err(err) => result_sender
-                                        .clone()
-                                        .send(TaskResult::ReadToString(Err(err), callback))
-                                        .unwrap(),
-                                }
+                                file.read_to_string(&mut value).unwrap();
+                                result_sender
+                                    .clone()
+                                    .send(TaskResult::ReadToString(value, callback))
+                                    .unwrap()
                             }
                             Task::Exit => {
                                 result_sender
@@ -70,25 +65,25 @@ impl Fs {
         Fs { task_sender }
     }
 
-    pub fn println(&self, string: String) -> Result<(), SendError<Task>> {
-        self.task_sender.send(Task::Println(string))
+    pub fn println(&self, string: String) {
+        self.task_sender.send(Task::Println(string)).unwrap()
     }
 
-    pub fn open(&self, path: String, callback: FileCallback) -> Result<(), SendError<Task>> {
-        self.task_sender.send(Task::Open(path, callback))
+    pub fn open(&self, path: &str, callback: FileCallback) {
+        self.task_sender.send(Task::Open(path.to_string(), callback)).unwrap()
     }
 
-    pub fn read_to_string(&self, file: File, callback: StringCallback) -> Result<(), SendError<Task>> {
-        self.task_sender.send(Task::ReadToString(file, callback))
+    pub fn read_to_string(&self, file: File, callback: StringCallback) {
+        self.task_sender.send(Task::ReadToString(file, callback)).unwrap()
     }
 
-    pub fn close(&self) -> Result<(), SendError<Task>> {
-        self.task_sender.send(Task::Exit)
+    pub fn close(&self) {
+        self.task_sender.send(Task::Exit).unwrap()
     }
 }
 
-type FileCallback = Box<Fn(io::Result<File>) + Send>;
-type StringCallback = Box<Fn(io::Result<String>) + Send>;
+type FileCallback = Box<FnOnce(File) + Send>;
+type StringCallback = Box<FnOnce(String) + Send>;
 
 pub enum Task {
     Exit,
@@ -99,7 +94,19 @@ pub enum Task {
 
 pub enum TaskResult {
     Exit,
-    Open(io::Result<File>, FileCallback),
-    ReadToString(io::Result<String>, StringCallback),
+    Open(File, FileCallback),
+    ReadToString(String, StringCallback),
 }
 
+const TEST_FILE_VALUE: &str = "Hello, World!";
+
+#[test]
+fn test_fs() {
+    let fs = Fs::new();
+    fs.clone().open("test.txt", Box::new(move |file| {
+        fs.clone().read_to_string(file, Box::new(move |value| {
+            assert_eq!(TEST_FILE_VALUE, &value);
+            fs.clone().println(value);
+        }))
+    }))
+}
