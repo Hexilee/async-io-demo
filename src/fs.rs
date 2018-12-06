@@ -105,7 +105,7 @@ const TEST_FILE_VALUE: &str = "Hello, World!";
 #[test]
 fn test_fs() {
     let fs = Fs::new();
-    fs.clone().open("test.txt", Box::new(move |file| {
+    fs.clone().open("./src/test.txt", Box::new(move |file| {
         fs.clone().read_to_string(file, Box::new(move |value| {
             assert_eq!(TEST_FILE_VALUE, &value);
             fs.clone().println(value);
