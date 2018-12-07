@@ -4,6 +4,7 @@ use std::io::Read;
 use std::boxed::FnBox;
 use mio::*;
 use std::thread;
+use std::time::Duration;
 
 #[derive(Clone)]
 pub struct Fs {
@@ -22,7 +23,7 @@ pub fn fs_async() -> (Fs, FsHandler) {
     let (result_sender, result_receiver) = unbounded();
     let poll = Poll::new().unwrap();
     let (registration, set_readiness) = Registration::new2();
-    poll.register(&registration, FS_TOKEN, Ready::readable(), PollOpt::oneshot()).unwrap();
+    poll.register(&registration, FS_TOKEN, Ready::readable(), PollOpt::edge()).unwrap();
     let io_worker = thread::spawn(move || {
         let mut task_counter = 0;
         loop {
@@ -36,6 +37,7 @@ pub fn fs_async() -> (Fs, FsHandler) {
                                 .send(TaskResult::Open(File::open(path).unwrap(), callback, fs))
                                 .unwrap();
                             set_readiness.set_readiness(Ready::readable()).unwrap();
+                            println!("task open complete");
                         }
                         Task::ReadToString(mut file, callback, fs) => {
                             let mut value = String::new();
@@ -44,6 +46,7 @@ pub fn fs_async() -> (Fs, FsHandler) {
                                 .send(TaskResult::ReadToString(value, callback, fs))
                                 .unwrap();
                             set_readiness.set_readiness(Ready::readable()).unwrap();
+                            println!("task ReadToString complete");
                         }
                         Task::Exit => {
                             result_sender
@@ -68,13 +71,16 @@ pub fn fs_async() -> (Fs, FsHandler) {
         let mut loop_counter = 0;
         let mut result_counter = 0;
         'outer: loop {
-            poll.poll(&mut events, None).unwrap();
+            poll.poll(&mut events, Some(Duration::from_secs(1))).unwrap();
             loop_counter += 1;
+            println!("total_event_counter: {}, token_event_counter: {}, loop_counter: {}, result_counter: {}", total_event_counter, token_event_counter, loop_counter, result_counter);
             for event in events.iter() {
                 total_event_counter += 1;
+                println!("total_event_counter: {}, token_event_counter: {}, loop_counter: {}, result_counter: {}", total_event_counter, token_event_counter, loop_counter, result_counter);
                 match event.token() {
                     FS_TOKEN => {
                         token_event_counter += 1;
+                        println!("total_event_counter: {}, token_event_counter: {}, loop_counter: {}, result_counter: {}", total_event_counter, token_event_counter, loop_counter, result_counter);
                         loop {
                             match result_receiver.try_recv() {
                                 Ok(result) => {
@@ -90,12 +96,13 @@ pub fn fs_async() -> (Fs, FsHandler) {
                                 }
                             }
                         }
-                        poll.reregister(&registration, FS_TOKEN, Ready::readable(), PollOpt::oneshot()).unwrap();
+//                        poll.reregister(&registration, FS_TOKEN, Ready::readable(), PollOpt::edge()).unwrap();
                     }
 
                     _ => unreachable!()
                 }
             }
+            println!("total_event_counter: {}, token_event_counter: {}, loop_counter: {}, result_counter: {}", total_event_counter, token_event_counter, loop_counter, result_counter);
         };
         println!("total_event_counter: {}, token_event_counter: {}, loop_counter: {}, result_counter: {}", total_event_counter, token_event_counter, loop_counter, result_counter);
     });
