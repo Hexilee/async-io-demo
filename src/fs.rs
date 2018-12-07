@@ -69,12 +69,12 @@ impl Fs {
         self.task_sender.send(Task::Println(string)).unwrap()
     }
 
-    pub fn open(&self, path: &str, callback: FileCallback) {
-        self.task_sender.send(Task::Open(path.to_string(), callback, self.clone())).unwrap()
+    pub fn open<F: FnOnce(File, Fs) + Send + 'static>(&self, path: &str, callback: F) {
+        self.task_sender.send(Task::Open(path.to_string(), Box::new(callback), self.clone())).unwrap()
     }
 
-    pub fn read_to_string(&self, file: File, callback: StringCallback) {
-        self.task_sender.send(Task::ReadToString(file, callback, self.clone())).unwrap()
+    pub fn read_to_string<F: FnOnce(String, Fs) + Send + 'static>(&self, file: File, callback: F) {
+        self.task_sender.send(Task::ReadToString(file, Box::new(callback), self.clone())).unwrap()
     }
 
     pub fn close(&self) {
@@ -103,11 +103,11 @@ const TEST_FILE_VALUE: &str = "Hello, World!";
 #[test]
 fn test_fs() {
     let fs = Fs::new();
-    fs.open("./src/test.txt", Box::new(|file, fs| {
-        fs.read_to_string(file, Box::new(move |value, fs| {
+    fs.open("./src/test.txt", |file, fs| {
+        fs.read_to_string(file, |value, fs| {
             assert_eq!(TEST_FILE_VALUE, &value);
             fs.println(value);
             fs.close();
-        }))
-    }));
+        })
+    });
 }
