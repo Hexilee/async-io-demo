@@ -18,16 +18,16 @@ impl Fs {
                     Ok(task) => {
                         match task {
                             Task::Println(ref string) => println!("{}", string),
-                            Task::Open(path, callback) => {
+                            Task::Open(path, callback, fs) => {
                                 result_sender
-                                    .send(TaskResult::Open(File::open(path).unwrap(), callback))
+                                    .send(TaskResult::Open(File::open(path).unwrap(), callback, fs))
                                     .unwrap();
                             }
-                            Task::ReadToString(mut file, callback) => {
+                            Task::ReadToString(mut file, callback, fs) => {
                                 let mut value = String::new();
                                 file.read_to_string(&mut value).unwrap();
                                 result_sender
-                                    .send(TaskResult::ReadToString(value, callback))
+                                    .send(TaskResult::ReadToString(value, callback, fs))
                                     .unwrap()
                             }
                             Task::Exit => {
@@ -50,8 +50,8 @@ impl Fs {
                 match result_receiver.recv() {
                     Ok(result) => {
                         match result {
-                            TaskResult::ReadToString(value, callback) => callback(value),
-                            TaskResult::Open(file, callback) => callback(file),
+                            TaskResult::ReadToString(value, callback, fs) => callback(value, fs),
+                            TaskResult::Open(file, callback, fs) => callback(file, fs),
                             TaskResult::Exit => return
                         }
                     }
@@ -70,11 +70,11 @@ impl Fs {
     }
 
     pub fn open(&self, path: &str, callback: FileCallback) {
-        self.task_sender.send(Task::Open(path.to_string(), callback)).unwrap()
+        self.task_sender.send(Task::Open(path.to_string(), callback, self.clone())).unwrap()
     }
 
     pub fn read_to_string(&self, file: File, callback: StringCallback) {
-        self.task_sender.send(Task::ReadToString(file, callback)).unwrap()
+        self.task_sender.send(Task::ReadToString(file, callback, self.clone())).unwrap()
     }
 
     pub fn close(&self) {
@@ -82,20 +82,20 @@ impl Fs {
     }
 }
 
-type FileCallback = Box<FnBox(File) + Send>;
-type StringCallback = Box<FnBox(String) + Send>;
+type FileCallback = Box<FnBox(File, Fs) + Send>;
+type StringCallback = Box<FnBox(String, Fs) + Send>;
 
 pub enum Task {
     Exit,
     Println(String),
-    Open(String, FileCallback),
-    ReadToString(File, StringCallback),
+    Open(String, FileCallback, Fs),
+    ReadToString(File, StringCallback, Fs),
 }
 
 pub enum TaskResult {
     Exit,
-    Open(File, FileCallback),
-    ReadToString(String, StringCallback),
+    Open(File, FileCallback, Fs),
+    ReadToString(String, StringCallback, Fs),
 }
 
 const TEST_FILE_VALUE: &str = "Hello, World!";
@@ -103,8 +103,8 @@ const TEST_FILE_VALUE: &str = "Hello, World!";
 #[test]
 fn test_fs() {
     let fs = Fs::new();
-    fs.clone().open("./src/test.txt", Box::new(move |file| {
-        fs.clone().read_to_string(file, Box::new(move |value| {
+    fs.open("./src/test.txt", Box::new(|file, fs| {
+        fs.read_to_string(file, Box::new(move |value, fs| {
             assert_eq!(TEST_FILE_VALUE, &value);
             fs.println(value);
             fs.close();
