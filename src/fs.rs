@@ -12,22 +12,6 @@ impl Fs {
     pub fn new() -> Self {
         let (task_sender, task_receiver) = channel();
         let (result_sender, result_receiver) = channel();
-        std::thread::spawn(move || {
-            loop {
-                match result_receiver.recv() {
-                    Ok(result) => {
-                        match result {
-                            TaskResult::ReadToString(value, callback) => callback(value),
-                            TaskResult::Open(file, callback) => callback(file),
-                            TaskResult::Exit => return
-                        }
-                    }
-                    Err(_) => {
-                        return;
-                    }
-                }
-            }
-        });
 
         std::thread::spawn(move || {
             loop {
@@ -64,6 +48,24 @@ impl Fs {
                 }
             }
         });
+
+        std::thread::spawn(move || {
+            loop {
+                match result_receiver.recv() {
+                    Ok(result) => {
+                        match result {
+                            TaskResult::ReadToString(value, callback) => callback(value),
+                            TaskResult::Open(file, callback) => callback(file),
+                            TaskResult::Exit => return
+                        }
+                    }
+                    Err(_) => {
+                        return;
+                    }
+                }
+            }
+        });
+
         Fs { task_sender }
     }
 
