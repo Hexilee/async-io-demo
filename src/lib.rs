@@ -11,6 +11,9 @@ mod fs;
 mod fs_mio;
 
 #[cfg(test)]
+mod spurious_events;
+
+#[cfg(test)]
 mod poll_timeout;
 
 #[cfg(test)]
