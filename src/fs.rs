@@ -1,4 +1,4 @@
-use std::sync::mpsc::{Sender, channel};
+use crossbeam_channel::{unbounded, Sender};
 use std::fs::File;
 use std::io::Read;
 use std::boxed::FnBox;
@@ -10,9 +10,8 @@ pub struct Fs {
 
 impl Fs {
     pub fn new() -> Self {
-        let (task_sender, task_receiver) = channel();
-        let (result_sender, result_receiver) = channel();
-
+        let (task_sender, task_receiver) = unbounded();
+        let (result_sender, result_receiver) = unbounded();
         std::thread::spawn(move || {
             loop {
                 match task_receiver.recv() {
@@ -21,7 +20,6 @@ impl Fs {
                             Task::Println(ref string) => println!("{}", string),
                             Task::Open(path, callback) => {
                                 result_sender
-                                    .clone()
                                     .send(TaskResult::Open(File::open(path).unwrap(), callback))
                                     .unwrap();
                             }
@@ -29,13 +27,11 @@ impl Fs {
                                 let mut value = String::new();
                                 file.read_to_string(&mut value).unwrap();
                                 result_sender
-                                    .clone()
                                     .send(TaskResult::ReadToString(value, callback))
                                     .unwrap()
                             }
                             Task::Exit => {
                                 result_sender
-                                    .clone()
                                     .send(TaskResult::Exit)
                                     .unwrap();
                                 return;
@@ -110,7 +106,7 @@ fn test_fs() {
     fs.clone().open("./src/test.txt", Box::new(move |file| {
         fs.clone().read_to_string(file, Box::new(move |value| {
             assert_eq!(TEST_FILE_VALUE, &value);
-            fs.clone().println(value);
+            fs.println(value);
             fs.close();
         }))
     }));

@@ -8,6 +8,9 @@ mod tcp;
 mod fs;
 
 #[cfg(test)]
+mod fs_mio;
+
+#[cfg(test)]
 mod poll_timeout;
 
 #[cfg(test)]

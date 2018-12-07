@@ -6,3 +6,4 @@ edition = "2018"
 
 [dependencies]
 mio = "0.6.16"
+crossbeam-channel = "0.3.2"
