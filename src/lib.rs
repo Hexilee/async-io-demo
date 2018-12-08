@@ -16,6 +16,7 @@ mod spurious_events;
 #[cfg(test)]
 mod poll_timeout;
 
+#[cfg(test)]
 mod executor;
 
 #[cfg(test)]
