@@ -1,8 +1,8 @@
 use mio::*;
 use std::time::{Duration};
-use std::error::Error;
+use failure::Error;
 
-fn main() -> Result<(), Box<Error>> {
+fn main() -> Result<(), Error> {
     let poll = Poll::new()?;
     let timeout = Duration::from_millis(10);
     let mut events = Events::with_capacity(1024);

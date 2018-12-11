@@ -1,7 +1,7 @@
 use mio::*;
 use mio::net::{TcpListener, TcpStream};
 use std::io::{Read, Write};
-use std::error::Error;
+use failure::Error;
 use std::time::{Duration, Instant};
 
 const SERVER_ACCEPT: Token = Token(0);
@@ -10,7 +10,7 @@ const CLIENT: Token = Token(2);
 const SERVER_HELLO: &[u8] = b"PING";
 const CLIENT_HELLO: &[u8] = b"PONG";
 
-fn main() -> Result<(), Box<Error>> {
+fn main() -> Result<(), Error> {
     let addr = "127.0.0.1:13265".parse()?;
 
 // Setup the server socket

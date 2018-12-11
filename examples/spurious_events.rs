@@ -2,11 +2,11 @@ use mio::*;
 use std::time::Duration;
 use crossbeam_channel::unbounded;
 use std::io;
-use std::error::Error;
+use failure::Error;
 
 const TOKEN: Token = Token(0);
 
-fn main() -> Result<(), Box<Error>> {
+fn main() -> Result<(), Error> {
     let poll = Poll::new()?;
     let (registration, set_readiness) = Registration::new2();
     poll.register(&registration, TOKEN, Ready::readable(), PollOpt::edge())?;
