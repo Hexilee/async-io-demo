@@ -1,9 +1,7 @@
 use mio::*;
 use std::time::{Duration};
 
-
-#[test]
-fn timeout_test() {
+fn main() {
     let poll = Poll::new().unwrap();
     let timeout = Duration::from_millis(10);
     let mut events = Events::with_capacity(1024);

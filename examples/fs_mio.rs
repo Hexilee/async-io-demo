@@ -1,8 +1,12 @@
+#![feature(fnbox)]
+
 use crossbeam_channel::{unbounded, Sender};
 use std::fs::File;
 use std::io::Read;
 use std::boxed::FnBox;
+use mio::*;
 use std::thread;
+use std::time::Duration;
 
 #[derive(Clone)]
 pub struct Fs {
@@ -14,10 +18,15 @@ pub struct FsHandler {
     executor: thread::JoinHandle<()>,
 }
 
+const FS_TOKEN: Token = Token(0);
+
 pub fn fs_async() -> (Fs, FsHandler) {
     let (task_sender, task_receiver) = unbounded();
     let (result_sender, result_receiver) = unbounded();
-    let io_worker = std::thread::spawn(move || {
+    let poll = Poll::new().unwrap();
+    let (registration, set_readiness) = Registration::new2();
+    poll.register(&registration, FS_TOKEN, Ready::readable(), PollOpt::oneshot()).unwrap();
+    let io_worker = thread::spawn(move || {
         loop {
             match task_receiver.recv() {
                 Ok(task) => {
@@ -27,45 +36,60 @@ pub fn fs_async() -> (Fs, FsHandler) {
                             result_sender
                                 .send(TaskResult::Open(File::open(path).unwrap(), callback, fs))
                                 .unwrap();
+                            set_readiness.set_readiness(Ready::readable()).unwrap();
                         }
                         Task::ReadToString(mut file, callback, fs) => {
                             let mut value = String::new();
                             file.read_to_string(&mut value).unwrap();
                             result_sender
                                 .send(TaskResult::ReadToString(value, callback, fs))
-                                .unwrap()
+                                .unwrap();
+                            set_readiness.set_readiness(Ready::readable()).unwrap();
                         }
                         Task::Exit => {
                             result_sender
                                 .send(TaskResult::Exit)
                                 .unwrap();
-                            return;
+                            break;
                         }
                     }
                 }
                 Err(_) => {
-                    return;
+                    break;
                 }
             }
-        }
-    });
-    let executor = std::thread::spawn(move || {
-        loop {
-            match result_receiver.recv() {
-                Ok(result) => {
-                    match result {
-                        TaskResult::ReadToString(value, callback, fs) => callback(value, fs),
-                        TaskResult::Open(file, callback, fs) => callback(file, fs),
-                        TaskResult::Exit => return
-                    }
-                }
-                Err(_) => {
-                    return;
-                }
-            }
-        }
+        };
     });
 
+    let executor = thread::spawn(move || {
+        let mut events = Events::with_capacity(1024);
+        'outer: loop {
+            poll.poll(&mut events, Some(Duration::from_secs(1))).unwrap();
+            for event in events.iter() {
+                match event.token() {
+                    FS_TOKEN => {
+                        loop {
+                            match result_receiver.try_recv() {
+                                Ok(result) => {
+                                    match result {
+                                        TaskResult::ReadToString(value, callback, fs) => callback(value, fs),
+                                        TaskResult::Open(file, callback, fs) => callback(file, fs),
+                                        TaskResult::Exit => break 'outer
+                                    }
+                                }
+                                Err(_) => {
+                                    break;
+                                }
+                            }
+                        }
+                        poll.reregister(&registration, FS_TOKEN, Ready::readable(), PollOpt::oneshot()).unwrap();
+                    }
+
+                    _ => unreachable!()
+                }
+            }
+        };
+    });
     (Fs { task_sender }, FsHandler { io_worker, executor })
 }
 
@@ -83,7 +107,7 @@ impl Fs {
     }
 
     pub fn close(&self) {
-        self.task_sender.send(Task::Exit).unwrap();
+        self.task_sender.send(Task::Exit).unwrap()
     }
 }
 
@@ -110,13 +134,11 @@ pub enum TaskResult {
     ReadToString(String, StringCallback, Fs),
 }
 
-
 const TEST_FILE_VALUE: &str = "Hello, World!";
 
-#[test]
-fn test_fs() {
+fn main() {
     let (fs, fs_handler) = fs_async();
-    fs.open("./src/test.txt", |file, fs| {
+    fs.open("./examples/test.txt", |file, fs| {
         fs.read_to_string(file, |value, fs| {
             assert_eq!(TEST_FILE_VALUE, &value);
             fs.println(value);

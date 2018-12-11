@@ -4,8 +4,7 @@ use crossbeam_channel::unbounded;
 
 const TOKEN: Token = Token(0);
 
-#[test]
-fn test_spurious_events() {
+fn main() {
     let poll = Poll::new().unwrap();
     let (registration, set_readiness) = Registration::new2();
     poll.register(&registration, TOKEN, Ready::readable(), PollOpt::edge()).unwrap();
