@@ -28,11 +28,11 @@ pub fn fs_async() -> (Fs, FsHandler) {
                         Task::Println(ref string) => println!("{}", string),
                         Task::Open(path, callback, fs) => {
                             result_sender
-                                .send(TaskResult::Open(File::open(path).unwrap(), callback, fs))?
+                                .send(TaskResult::Open(File::open(path)?, callback, fs))?
                         }
                         Task::ReadToString(mut file, callback, fs) => {
                             let mut value = String::new();
-                            file.read_to_string(&mut value).unwrap();
+                            file.read_to_string(&mut value)?;
                             result_sender
                                 .send(TaskResult::ReadToString(value, callback, fs))?
                         }
@@ -54,8 +54,8 @@ pub fn fs_async() -> (Fs, FsHandler) {
         loop {
             let result = result_receiver.recv()?;
             match result {
-                TaskResult::ReadToString(value, callback, fs) => callback(value, fs),
-                TaskResult::Open(file, callback, fs) => callback(file, fs),
+                TaskResult::ReadToString(value, callback, fs) => callback.call_box((value, fs))?,
+                TaskResult::Open(file, callback, fs) => callback.call_box((file, fs))?,
                 TaskResult::Exit => break
             };
         };
@@ -71,12 +71,12 @@ impl Fs {
     }
 
     pub fn open<F>(&self, path: &str, callback: F) -> Result<(), Error>
-        where F: FnOnce(File, Fs) -> Result<(), Error> + Send + 'static {
+        where F: FnOnce(File, Fs) -> Result<(), Error> + Sync + Send + 'static {
         Ok(self.task_sender.send(Task::Open(path.to_string(), Box::new(callback), self.clone()))?)
     }
 
     pub fn read_to_string<F>(&self, file: File, callback: F) -> Result<(), Error>
-        where F: FnOnce(String, Fs) -> Result<(), Error> + Send + 'static {
+        where F: FnOnce(String, Fs) -> Result<(), Error> + Sync + Send + 'static {
         Ok(self.task_sender.send(Task::ReadToString(file, Box::new(callback), self.clone()))?)
     }
 
@@ -92,8 +92,8 @@ impl FsHandler {
     }
 }
 
-type FileCallback = Box<FnBox(File, Fs) -> Result<(), Error> + Send>;
-type StringCallback = Box<FnBox(String, Fs) -> Result<(), Error> + Send>;
+type FileCallback = Box<FnBox(File, Fs) -> Result<(), Error> + Sync + Send>;
+type StringCallback = Box<FnBox(String, Fs) -> Result<(), Error> + Sync + Send>;
 
 pub enum Task {
     Exit,
