@@ -23,7 +23,7 @@ pub fn fs_async() -> (Fs, FsHandler) {
     let (result_sender, result_receiver) = unbounded();
     let poll = Poll::new().unwrap();
     let (registration, set_readiness) = Registration::new2();
-    poll.register(&registration, FS_TOKEN, Ready::readable(), PollOpt::edge()).unwrap();
+    poll.register(&registration, FS_TOKEN, Ready::readable(), PollOpt::oneshot()).unwrap();
     let io_worker = thread::spawn(move || {
         loop {
             match task_receiver.recv() {
@@ -80,7 +80,7 @@ pub fn fs_async() -> (Fs, FsHandler) {
                                 }
                             }
                         }
-                        poll.reregister(&registration, FS_TOKEN, Ready::readable(), PollOpt::edge()).unwrap();
+                        poll.reregister(&registration, FS_TOKEN, Ready::readable(), PollOpt::oneshot()).unwrap();
                     }
 
                     _ => unreachable!()
