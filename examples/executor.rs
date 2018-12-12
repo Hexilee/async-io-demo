@@ -4,28 +4,24 @@
 //use std::boxed::FnBox;
 //use mio::*;
 //use std::thread;
-//use std::cell::RefCell;
 //use std::borrow::Borrow;
+//use slab::Slab;
 //
-//const EXIT_TOKEN: Token = Token(0);
-//const SERVER_TOKEN: Token = Token(1);
-//const STREAM_TOKEN: Token = Token(2);
-//const FS_TOKEN: Token = Token(3);
+//const MAX_USIZE: usize = 1 << 64;
+//const AWAKE_TOKEN: Token = Token(MAX_USIZE);
 //
-//pub struct Executor {
+//struct Executor {
 //    poll: Poll,
-//    handlers: RefCell<Vec<Handler>>,
-//    exit_readiness: SetReadiness,
+//    awake_readiness: SetReadiness,
+//    read_tasks: Slab<Box<dyn ReadTask>>,
+//    write_tasks: Slab<Box<dyn WriteTask>>,
 //}
 //
-//trait SizedEvented: Sized + Evented {
-//
+//trait ReadTask {
+//    fn read(&mut self, executor: &Executor);
 //}
 //
-//struct Handler {
-//    token: Token,
-//    evented: Box<SizedEvented>,
-//    action: Box<Fn(&Poll, Event, &dyn SizedEvented) -> Result<(), failure::Error>>,
+//trait WriteTask {
 //}
 //
 //impl Executor {
