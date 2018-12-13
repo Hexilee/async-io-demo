@@ -32,11 +32,19 @@ const fn get_task_token(index: usize) -> Token {
     Token(index * 2 + 1)
 }
 
-const fn index_from_source_token(token: Token) -> usize {
+// panic when token is ord
+unsafe fn index_from_source_token(token: Token) -> usize {
+    if !is_source(token) {
+        panic!(format!("not a source token: {}", token.0));
+    }
     token.0 / 2
 }
 
-const fn index_from_task_token(token: Token) -> usize {
+// panic when token is not ord
+fn index_from_task_token(token: Token) -> usize {
+    if !is_task(token) {
+        panic!(format!("not a task token: {}", token.0));
+    }
     (token.0 - 1) / 2
 }
 
@@ -140,13 +148,12 @@ pub fn block_on<R, F>(main_task: F)
                                 }
                             }
                             token if is_source(token) => {
-                                let index = index_from_source_token(token);
+                                let index = unsafe { index_from_source_token(token) };
                                 let source = &executor.sources.borrow_mut()[index];
                                 source.task_waker.wake();
                             }
 
                             token if is_task(token) => {}
-
                             _ => {}
                         }
                     }
@@ -196,9 +203,6 @@ fn register_source<T: Evented + 'static>(evented: T, task_waker: LocalWaker, int
 // panic when token is ord
 unsafe fn reregister_source(token: Token, interest: Ready) {
     EXECUTOR.with(move |executor: &Executor| {
-        if !is_source(token) {
-            panic!(format!("not a source token: {}", token.0));
-        }
         let index = index_from_source_token(token);
         let source = &executor.sources.borrow()[index];
         executor.poll.reregister(&source.evented, token, interest, PollOpt::oneshot()).expect("task registration failed");
@@ -208,9 +212,6 @@ unsafe fn reregister_source(token: Token, interest: Ready) {
 // panic when token is ord
 unsafe fn drop_source(token: Token) {
     EXECUTOR.with(move |executor: &Executor| {
-        if !is_source(token) {
-            panic!(format!("not a source token: {}", token.0));
-        }
         let index = index_from_source_token(token);
         let source = &executor.sources.borrow()[index];
         executor.poll.deregister(&source.evented).expect("task registration failed");
