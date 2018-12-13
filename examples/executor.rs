@@ -15,6 +15,7 @@ use std::ptr::NonNull;
 use std::cell::{RefCell, Cell};
 use std::time::Duration;
 use std::rc::Rc;
+use std::net::SocketAddr;
 use slab::Slab;
 use mio::*;
 use failure::Error;
@@ -80,9 +81,9 @@ struct Task {
     pub(crate) inner_task: PinFuture<()>,
 }
 
-struct TcpListener(net::TcpListener);
+struct TcpListener(Rc<net::TcpListener>);
 
-struct TcpStream(net::TcpStream);
+struct TcpStream(Rc<net::TcpStream>);
 
 unsafe impl UnsafeWake for InnerWaker {
     unsafe fn clone_raw(&self) -> Waker {
@@ -232,5 +233,111 @@ unsafe fn drop_source(token: Token) {
     });
 }
 
+impl <T: Evented> Evented for Rc<T> {
+    fn register(&self, poll: &Poll, token: Token, interest: Ready, opts: PollOpt) -> io::Result<()> {
+        self.borrow().register(poll, token, interest, opts)
+    }
+
+    fn reregister(&self, poll: &Poll, token: Token, interest: Ready, opts: PollOpt) -> io::Result<()> {
+        self.borrow().reregister(poll, token, interest, opts)
+    }
+
+    fn deregister(&self, poll: &Poll) -> io::Result<()> {
+        self.borrow().deregister(poll)
+    }
+}
+
+impl TcpListener {
+    pub fn bind(addr: &SocketAddr) -> io::Result<TcpListener> {
+        let l = mio::net::TcpListener::bind(addr)?;
+        Ok(TcpListener::new(l))
+    }
+
+    fn new(listener: mio::net::TcpListener) -> TcpListener {
+        TcpListener(Rc::new(listener))
+    }
+
+    pub fn local_addr(&self) -> io::Result<SocketAddr> {
+        self.0.local_addr()
+    }
+    pub fn ttl(&self) -> io::Result<u32> {
+        self.0.ttl()
+    }
+    pub fn set_ttl(&self, ttl: u32) -> io::Result<()> {
+        self.0.set_ttl(ttl)
+    }
+    fn poll_accept(&mut self, lw: &LocalWaker) -> task::Poll<io::Result<(TcpStream, SocketAddr)>> {
+        let token = register_source(self.0.clone(), lw.clone(), Ready::readable());
+        match self.0.accept() {
+            Ok((stream, addr)) => task::Poll::Ready(Ok((TcpStream::new(stream), addr))),
+            Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
+                task::Poll::Pending
+            }
+            Err(err) => task::Poll::Ready(Err(err))
+        }
+    }
+}
+
+impl TcpStream {
+    pub(crate) fn new(connected: mio::net::TcpStream) -> TcpStream {
+        TcpStream(Rc::new(connected))
+    }
+
+    pub fn local_addr(&self) -> io::Result<SocketAddr> {
+        self.0.local_addr()
+    }
+
+    pub fn peer_addr(&self) -> io::Result<SocketAddr> {
+        self.0.peer_addr()
+    }
+
+    pub fn nodelay(&self) -> io::Result<bool> {
+        self.0.nodelay()
+    }
+
+    pub fn set_nodelay(&self, nodelay: bool) -> io::Result<()> {
+        self.0.set_nodelay(nodelay)
+    }
+
+    pub fn recv_buffer_size(&self) -> io::Result<usize> {
+        self.0.recv_buffer_size()
+    }
+
+    pub fn set_recv_buffer_size(&self, size: usize) -> io::Result<()> {
+        self.0.set_recv_buffer_size(size)
+    }
+
+    pub fn send_buffer_size(&self) -> io::Result<usize> {
+        self.0.send_buffer_size()
+    }
+
+    pub fn set_send_buffer_size(&self, size: usize) -> io::Result<()> {
+        self.0.set_send_buffer_size(size)
+    }
+
+    pub fn keepalive(&self) -> io::Result<Option<Duration>> {
+        self.0.keepalive()
+    }
+
+    pub fn set_keepalive(&self, keepalive: Option<Duration>) -> io::Result<()> {
+        self.0.set_keepalive(keepalive)
+    }
+
+    pub fn ttl(&self) -> io::Result<u32> {
+        self.0.ttl()
+    }
+
+    pub fn set_ttl(&self, ttl: u32) -> io::Result<()> {
+        self.0.set_ttl(ttl)
+    }
+
+    pub fn linger(&self) -> io::Result<Option<Duration>> {
+        self.0.linger()
+    }
+
+    pub fn set_linger(&self, dur: Option<Duration>) -> io::Result<()> {
+        self.0.set_linger(dur)
+    }
+}
 
 fn main() {}
