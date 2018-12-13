@@ -145,9 +145,7 @@ pub fn block_on<R, F>(main_task: F)
                                 source.task_waker.wake();
                             }
 
-                            token if is_task(token) => {
-
-                            }
+                            token if is_task(token) => {}
 
                             _ => {}
                         }
@@ -178,7 +176,7 @@ pub fn spawn<F: Future<Output=()> + 'static>(task: F) {
     });
 }
 
-pub fn register_source<T: Evented + 'static>(evented: T, task_waker: LocalWaker, interest: Ready) -> Token {
+fn register_source<T: Evented + 'static>(evented: T, task_waker: LocalWaker, interest: Ready) -> Token {
     let ret_token = Rc::new(Cell::new(None));
     let ret_token_clone = ret_token.clone();
     EXECUTOR.with(move |executor: &Executor| {
@@ -195,7 +193,17 @@ pub fn register_source<T: Evented + 'static>(evented: T, task_waker: LocalWaker,
     ret_token_clone.get().expect("ret token is None")
 }
 
-//pub fn reregister_source
+// panic when token is ord
+unsafe fn reregister_source(token: Token, interest: Ready) {
+    EXECUTOR.with(move |executor: &Executor| {
+        if !is_source(token) {
+            panic!(format!("not a source token: {}", token.0));
+        }
+        let index = index_from_source_token(token);
+        let source = &executor.sources.borrow()[index];
+        executor.poll.reregister(&source.evented, token, interest, PollOpt::oneshot()).expect("task registration failed");
+    });
+}
 
 //
 //impl Executor {
