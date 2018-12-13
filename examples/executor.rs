@@ -205,6 +205,20 @@ unsafe fn reregister_source(token: Token, interest: Ready) {
     });
 }
 
+// panic when token is ord
+unsafe fn drop_source(token: Token) {
+    EXECUTOR.with(move |executor: &Executor| {
+        if !is_source(token) {
+            panic!(format!("not a source token: {}", token.0));
+        }
+        let index = index_from_source_token(token);
+        let source = &executor.sources.borrow()[index];
+        executor.poll.deregister(&source.evented).expect("task registration failed");
+        &executor.sources.borrow_mut().remove(index);
+    });
+}
+
+
 //
 //impl Executor {
 //    pub fn new() -> Result<Self, failure::Error> {
