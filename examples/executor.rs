@@ -128,8 +128,15 @@ pub fn spawn<F: Future<Output=()> + 'static>(task: F) {
             waker: InnerWaker { awake_readiness, awake_registration },
         });
         let token = get_task_token(index);
-        let task = &executor.tasks.borrow()[index];
-        executor.poll.register(&task.waker.awake_registration, token, Ready::all(), PollOpt::level()).expect("task registration failed");
+        let task = &mut executor.tasks.borrow_mut()[index];
+        match task.inner_task.as_mut().poll(&task.waker.gen_local_waker()) {
+            task::Poll::Ready(result) => {
+                executor.tasks.borrow_mut().remove(index);
+            }
+            task::Poll::Pending => {
+                executor.poll.register(&task.waker.awake_registration, token, Ready::all(), PollOpt::level()).expect("task registration failed");
+            }
+        }
     });
 }
 
