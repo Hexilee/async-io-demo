@@ -52,7 +52,7 @@ struct InnerWaker {
 
 struct Source {
     pub(crate) task_waker: LocalWaker,
-    pub(crate) waker: InnerWaker,
+    pub(crate) evented: Box<dyn Evented>,
 }
 
 struct Task {
@@ -140,16 +140,16 @@ pub fn spawn<F: Future<Output=()> + 'static>(task: F) {
     });
 }
 
-pub fn add_source<T: Evented>(evented: T, task_waker: LocalWaker) {
+pub fn add_source<T: Evented + 'static>(evented: T, task_waker: LocalWaker) {
     EXECUTOR.with(move |executor: &Executor| {
         let (awake_registration, awake_readiness) = Registration::new2();
         let index = executor.sources.borrow_mut().insert(Source {
             task_waker,
-            waker: InnerWaker { awake_readiness, awake_registration },
+            evented: Box::new(evented),
         });
         let token = get_source_token(index);
         let source = &executor.sources.borrow()[index];
-        executor.poll.register(&source.waker.awake_registration, token, Ready::all(), PollOpt::level()).expect("task registration failed");
+        executor.poll.register(&source.evented, token, Ready::all(), PollOpt::level()).expect("task registration failed");
     });
 }
 
