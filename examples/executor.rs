@@ -158,18 +158,18 @@ pub fn block_on<R, F>(main_task: F)
                                 let task = &mut executor.tasks.borrow_mut()[index];
                                 match task.inner_task.as_mut().poll(&task.waker.gen_local_waker()) {
                                     task::Poll::Ready(result) => {
-                                        executor.poll.deregister(&task.waker.awake_registration);
+                                        executor.poll.deregister(&task.waker.awake_registration).expect("task deregister failed");
                                         executor.tasks.borrow_mut().remove(index);
                                     }
                                     task::Poll::Pending => {
-                                        continue
+                                        task.waker.awake_readiness.set_readiness(Ready::empty()).expect("readiness setting empty failed");
                                     }
                                 }
                             }
                             _ => {}
                         }
                     }
-                    executor.main_waker.awake_readiness.set_readiness(Ready::empty());
+                    executor.main_waker.awake_readiness.set_readiness(Ready::empty()).expect("main readiness setting empty failed");
                 }
             }
         }
@@ -231,4 +231,6 @@ unsafe fn drop_source(token: Token) {
         &executor.sources.borrow_mut().remove(index);
     });
 }
+
+
 fn main() {}
