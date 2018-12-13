@@ -12,13 +12,17 @@ use std::task::{LocalWaker, Waker, UnsafeWake, self};
 use std::thread;
 use std::borrow::Borrow;
 use std::ptr::NonNull;
-use std::cell::RefCell;
+use std::cell::{RefCell, Cell};
+use std::time::Duration;
+use std::rc::Rc;
 use slab::Slab;
 use mio::*;
 use failure::Error;
 
 const MAX_RESOURCE_NUM: usize = std::usize::MAX;
 const MAIN_TASK_TOKEN: Token = Token(MAX_RESOURCE_NUM);
+const EVENT_CAP: usize = 1024;
+const POLL_TIME_OUT_MILL: u64 = 100;
 
 const fn get_source_token(index: usize) -> Token {
     Token(index * 2)
@@ -34,6 +38,14 @@ const fn index_from_source_token(token: Token) -> usize {
 
 const fn index_from_task_token(token: Token) -> usize {
     (token.0 - 1) / 2
+}
+
+const fn is_source(token: Token) -> bool {
+    token.0 % 2 == 0
+}
+
+const fn is_task(token: Token) -> bool {
+    token.0 % 2 == 1
 }
 
 type PinFuture<T> = Pin<Box<dyn Future<Output=T>>>;
@@ -113,9 +125,35 @@ pub fn block_on<R, F>(main_task: F)
           F: Future<Output=R> {
     EXECUTOR.with(move |executor: &Executor| {
         let mut pinned_task = Box::pinned(main_task);
+        let mut events = Events::with_capacity(EVENT_CAP);
         match pinned_task.as_mut().poll(&executor.main_waker()) {
             task::Poll::Ready(result) => return,
-            task::Poll::Pending => {}
+            task::Poll::Pending => {
+                loop {
+                    executor.poll.poll(&mut events, Some(Duration::from_millis(POLL_TIME_OUT_MILL))).expect("polling failed");
+                    for event in events.iter() {
+                        match event.token() {
+                            MAIN_TASK_TOKEN => {
+                                match pinned_task.as_mut().poll(&executor.main_waker()) {
+                                    task::Poll::Ready(result) => return,
+                                    task::Poll::Pending => continue
+                                }
+                            }
+                            token if is_source(token) => {
+                                let index = index_from_source_token(token);
+                                let source = &executor.sources.borrow_mut()[index];
+                                source.task_waker.wake();
+                            }
+
+                            token if is_task(token) => {
+
+                            }
+
+                            _ => {}
+                        }
+                    }
+                }
+            }
         }
     });
 }
@@ -140,7 +178,9 @@ pub fn spawn<F: Future<Output=()> + 'static>(task: F) {
     });
 }
 
-pub fn add_source<T: Evented + 'static>(evented: T, task_waker: LocalWaker) {
+pub fn register_source<T: Evented + 'static>(evented: T, task_waker: LocalWaker, interest: Ready) -> Token {
+    let ret_token = Rc::new(Cell::new(None));
+    let ret_token_clone = ret_token.clone();
     EXECUTOR.with(move |executor: &Executor| {
         let (awake_registration, awake_readiness) = Registration::new2();
         let index = executor.sources.borrow_mut().insert(Source {
@@ -149,9 +189,13 @@ pub fn add_source<T: Evented + 'static>(evented: T, task_waker: LocalWaker) {
         });
         let token = get_source_token(index);
         let source = &executor.sources.borrow()[index];
-        executor.poll.register(&source.evented, token, Ready::all(), PollOpt::level()).expect("task registration failed");
+        executor.poll.register(&source.evented, token, interest, PollOpt::oneshot()).expect("task registration failed");
+        ret_token.set(Some(token))
     });
+    ret_token_clone.get().expect("ret token is None")
 }
+
+//pub fn reregister_source
 
 //
 //impl Executor {
