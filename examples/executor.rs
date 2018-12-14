@@ -401,4 +401,19 @@ impl<'a> Future for TcpAcceptState<'a> {
     }
 }
 
+impl<'a> Future for StreamReadState<'a> {
+    type Output = io::Result<usize>;
+    fn poll(mut self: Pin<&mut Self>, lw: &LocalWaker) -> task::Poll<<Self as Future>::Output> {
+        self.stream.read_poll(lw)
+    }
+}
+
+impl<'a> Future for StreamWriteState<'a> {
+    type Output = io::Result<usize>;
+    fn poll(mut self: Pin<&mut Self>, lw: &LocalWaker) -> task::Poll<<Self as Future>::Output> {
+        self.stream.write_poll(lw)
+    }
+}
+
+
 fn main() {}
