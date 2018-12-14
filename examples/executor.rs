@@ -170,8 +170,11 @@ pub fn block_on<R, F>(main_task: F)
             task::Poll::Pending => {
                 debug!("main task pending");
                 loop {
-                    executor.poll.poll(&mut events, Some(Duration::from_millis(POLL_TIME_OUT_MILL))).expect("polling failed");
+                    // executor.poll.poll(&mut events, Some(Duration::from_millis(POLL_TIME_OUT_MILL))).expect("polling failed");
+                    executor.poll.poll(&mut events, None).expect("polling failed");
+                    debug!("events empty: {}", events.is_empty());
                     for event in events.iter() {
+                        debug!("get event: {:?}", event.token());
                         match event.token() {
                             MAIN_TASK_TOKEN => {
                                 debug!("receive a main task event");
@@ -188,6 +191,7 @@ pub fn block_on<R, F>(main_task: F)
                                 let index = unsafe { index_from_source_token(token) };
                                 debug!("source: Index({})", index);
                                 let source = &executor.sources.borrow()[index];
+                                debug!("source addr: {:p}", source);
                                 source.task_waker.wake();
                             }
 
@@ -260,6 +264,7 @@ unsafe fn reregister_source(token: Token, interest: Ready) {
         debug!("reregister source: Index({})", index);
         let source = &executor.sources.borrow()[index];
         executor.poll.reregister(&source.evented, token, interest, PollOpt::oneshot()).expect("task registration failed");
+        debug!("source addr: {:p}", source);
     });
 }
 
