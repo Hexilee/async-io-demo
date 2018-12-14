@@ -1,5 +1,6 @@
 #![feature(arbitrary_self_types)]
 #![feature(async_await)]
+#![feature(await_macro)]
 #![feature(futures_api)]
 #![feature(fnbox)]
 #![feature(pin)]
@@ -403,6 +404,10 @@ impl<'a> Future for StreamWriteState<'a> {
 
 fn main() {
     block_on(async {
-        println!("hello world!")
+        let mut listener = TcpListener::bind(&"127.0.0.1:7878".parse().unwrap()).expect("TcpListener bind fail");
+        println!("Listening on 127.0.0.1:7878");
+        while let Ok((stream, addr)) = await!(listener.accept()) {
+            println!("connection from {}", addr);
+        }
     })
 }
