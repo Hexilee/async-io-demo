@@ -198,12 +198,13 @@ pub fn block_on<R, F>(main_task: F)
                             token if is_task(token) => {
                                 debug!("receive a task event: {:?}", token);
                                 let index = unsafe { index_from_task_token(token) };
-                                let task = &mut executor.tasks.borrow_mut()[index];
+                                let mut tasks = executor.tasks.borrow_mut();
+                                let task = &mut tasks[index];
                                 match task.inner_task.as_mut().poll(&task.waker.gen_local_waker()) {
                                     task::Poll::Ready(_) => {
                                         debug!("task({:?}) complete", token);
                                         executor.poll.deregister(&task.waker.awake_registration).expect("task deregister failed");
-                                        executor.tasks.borrow_mut().remove(index);
+                                        tasks.remove(index);
                                     }
                                     task::Poll::Pending => {
                                         debug!("task({:?}) pending", token);
