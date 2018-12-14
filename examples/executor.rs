@@ -81,8 +81,10 @@ struct Task {
     pub(crate) inner_task: PinFuture<()>,
 }
 
+#[derive(Clone)]
 struct TcpListener(Rc<net::TcpListener>);
 
+#[derive(Clone)]
 struct TcpStream(Rc<net::TcpStream>);
 
 unsafe impl UnsafeWake for InnerWaker {
@@ -233,17 +235,31 @@ unsafe fn drop_source(token: Token) {
     });
 }
 
-impl <T: Evented> Evented for Rc<T> {
+impl Evented for TcpListener {
     fn register(&self, poll: &Poll, token: Token, interest: Ready, opts: PollOpt) -> io::Result<()> {
-        self.borrow().register(poll, token, interest, opts)
+        self.0.register(poll, token, interest, opts)
     }
 
     fn reregister(&self, poll: &Poll, token: Token, interest: Ready, opts: PollOpt) -> io::Result<()> {
-        self.borrow().reregister(poll, token, interest, opts)
+        self.0.reregister(poll, token, interest, opts)
     }
 
     fn deregister(&self, poll: &Poll) -> io::Result<()> {
-        self.borrow().deregister(poll)
+        self.0.deregister(poll)
+    }
+}
+
+impl Evented for TcpStream {
+    fn register(&self, poll: &Poll, token: Token, interest: Ready, opts: PollOpt) -> io::Result<()> {
+        self.0.register(poll, token, interest, opts)
+    }
+
+    fn reregister(&self, poll: &Poll, token: Token, interest: Ready, opts: PollOpt) -> io::Result<()> {
+        self.0.reregister(poll, token, interest, opts)
+    }
+
+    fn deregister(&self, poll: &Poll) -> io::Result<()> {
+        self.0.deregister(poll)
     }
 }
 
@@ -267,10 +283,10 @@ impl TcpListener {
         self.0.set_ttl(ttl)
     }
     fn poll_accept(&mut self, lw: &LocalWaker) -> task::Poll<io::Result<(TcpStream, SocketAddr)>> {
-        let token = register_source(self.0.clone(), lw.clone(), Ready::readable());
+        let token = register_source(self.clone(), lw.clone(), Ready::readable());
         match self.0.accept() {
             Ok((stream, addr)) => task::Poll::Ready(Ok((TcpStream::new(stream), addr))),
-            Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
+            Err(ref err) if err.kind() == io::ErrorKind::WouldBlock => {
                 task::Poll::Pending
             }
             Err(err) => task::Poll::Ready(Err(err))
