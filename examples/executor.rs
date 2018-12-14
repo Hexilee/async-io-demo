@@ -266,15 +266,15 @@ impl Evented for TcpListener {
 
 impl Evented for TcpStream {
     fn register(&self, poll: &Poll, token: Token, interest: Ready, opts: PollOpt) -> io::Result<()> {
-        self.0.register(poll, token, interest, opts)
+        self.inner.register(poll, token, interest, opts)
     }
 
     fn reregister(&self, poll: &Poll, token: Token, interest: Ready, opts: PollOpt) -> io::Result<()> {
-        self.0.reregister(poll, token, interest, opts)
+        self.inner.reregister(poll, token, interest, opts)
     }
 
     fn deregister(&self, poll: &Poll) -> io::Result<()> {
-        self.0.deregister(poll)
+        self.inner.deregister(poll)
     }
 }
 
@@ -311,79 +311,79 @@ impl TcpListener {
 
 impl TcpStream {
     pub(crate) fn new(connected: mio::net::TcpStream) -> TcpStream {
-        TcpStream(Rc::new(connected))
+        TcpStream{inner: Rc::new(connected)}
     }
 
     pub fn local_addr(&self) -> io::Result<SocketAddr> {
-        self.0.local_addr()
+        self.inner.local_addr()
     }
 
     pub fn peer_addr(&self) -> io::Result<SocketAddr> {
-        self.0.peer_addr()
+        self.inner.peer_addr()
     }
 
     pub fn nodelay(&self) -> io::Result<bool> {
-        self.0.nodelay()
+        self.inner.nodelay()
     }
 
     pub fn set_nodelay(&self, nodelay: bool) -> io::Result<()> {
-        self.0.set_nodelay(nodelay)
+        self.inner.set_nodelay(nodelay)
     }
 
     pub fn recv_buffer_size(&self) -> io::Result<usize> {
-        self.0.recv_buffer_size()
+        self.inner.recv_buffer_size()
     }
 
     pub fn set_recv_buffer_size(&self, size: usize) -> io::Result<()> {
-        self.0.set_recv_buffer_size(size)
+        self.inner.set_recv_buffer_size(size)
     }
 
     pub fn send_buffer_size(&self) -> io::Result<usize> {
-        self.0.send_buffer_size()
+        self.inner.send_buffer_size()
     }
 
     pub fn set_send_buffer_size(&self, size: usize) -> io::Result<()> {
-        self.0.set_send_buffer_size(size)
+        self.inner.set_send_buffer_size(size)
     }
 
     pub fn keepalive(&self) -> io::Result<Option<Duration>> {
-        self.0.keepalive()
+        self.inner.keepalive()
     }
 
     pub fn set_keepalive(&self, keepalive: Option<Duration>) -> io::Result<()> {
-        self.0.set_keepalive(keepalive)
+        self.inner.set_keepalive(keepalive)
     }
 
     pub fn ttl(&self) -> io::Result<u32> {
-        self.0.ttl()
+        self.inner.ttl()
     }
 
     pub fn set_ttl(&self, ttl: u32) -> io::Result<()> {
-        self.0.set_ttl(ttl)
+        self.inner.set_ttl(ttl)
     }
 
     pub fn linger(&self) -> io::Result<Option<Duration>> {
-        self.0.linger()
+        self.inner.linger()
     }
 
     pub fn set_linger(&self, dur: Option<Duration>) -> io::Result<()> {
-        self.0.set_linger(dur)
-    }
-}
-
-impl Read for TcpStream {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        self.0.read(buf)
-    }
-}
-
-impl Write for TcpStream {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        (&mut self.0).write(buf)
+        self.inner.set_linger(dur)
     }
 
-    fn flush(&mut self) -> io::Result<()> {
-        (&mut self.0).flush()
+    pub(crate) fn read_poll(&mut self, lw: &LocalWaker) -> task::Poll<io::Result<usize>> {
+        task::Poll::Pending
+    }
+
+    pub(crate) fn write_poll(&mut self, lw: &LocalWaker) -> task::Poll<io::Result<usize>> {
+        task::Poll::Pending
+    }
+
+    pub fn read(&mut self, buf: &mut [u8]) -> StreamReadState {
+        StreamReadState{stream: self}
+    }
+
+    pub fn write(&mut self, buf: &mut [u8]) -> StreamReadState {
+        StreamReadState{stream: self}
     }
 }
 
