@@ -119,7 +119,7 @@ unsafe impl UnsafeWake for InnerWaker {
 }
 
 impl InnerWaker {
-    pub(crate) fn gen_local_waker(&self) -> LocalWaker {
+    fn gen_local_waker(&self) -> LocalWaker {
         unsafe {
             LocalWaker::new(NonNull::from(self))
         }
@@ -139,7 +139,7 @@ impl Executor {
         })
     }
 
-    pub(crate) fn main_waker(&self) -> LocalWaker {
+    fn main_waker(&self) -> LocalWaker {
         unsafe {
             LocalWaker::new(NonNull::from(&self.main_waker))
         }
