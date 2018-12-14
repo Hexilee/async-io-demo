@@ -85,13 +85,14 @@ struct Task {
 #[derive(Clone)]
 struct TcpListener{
     inner: Rc<net::TcpListener>,
-    readiness: Ready
+    accept_source_token: Option<Token>
 }
 
 #[derive(Clone)]
 struct TcpStream {
     inner: Rc<net::TcpStream>,
-    readiness: Ready
+    read_source_token: Option<Token>,
+    write_source_token: Option<Token>
 }
 
 struct TcpAcceptState<'a> {
@@ -284,7 +285,7 @@ impl Evented for TcpStream {
 
 impl TcpListener {
     fn new(listener: mio::net::TcpListener) -> TcpListener {
-        TcpListener{inner: Rc::new(listener), readiness: Ready::empty()}
+        TcpListener{inner: Rc::new(listener), accept_source_token: None}
     }
 
     fn poll_accept(&self, lw: &LocalWaker) -> task::Poll<io::Result<(TcpStream, SocketAddr)>> {
@@ -320,7 +321,7 @@ impl TcpListener {
 
 impl TcpStream {
     pub fn new(connected: mio::net::TcpStream) -> TcpStream {
-        TcpStream { inner: Rc::new(connected), readiness: Ready::empty() }
+        TcpStream { inner: Rc::new(connected), read_source_token: None, write_source_token: None}
     }
 
     pub fn local_addr(&self) -> io::Result<SocketAddr> {
