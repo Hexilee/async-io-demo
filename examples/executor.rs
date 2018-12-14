@@ -184,14 +184,14 @@ pub fn block_on<R, F>(main_task: F)
                                 }
                             }
                             token if is_source(token) => {
-                                debug!("receive a source event: Token({:?})", token);
+                                debug!("receive a source event: {:?}", token);
                                 let index = unsafe { index_from_source_token(token) };
                                 let source = &executor.sources.borrow_mut()[index];
                                 source.task_waker.wake();
                             }
 
                             token if is_task(token) => {
-                                debug!("receive a task event: Token({:?})", token);
+                                debug!("receive a task event: {:?}", token);
                                 let index = unsafe { index_from_task_token(token) };
                                 let task = &mut executor.tasks.borrow_mut()[index];
                                 match task.inner_task.as_mut().poll(&task.waker.gen_local_waker()) {
@@ -246,7 +246,7 @@ fn register_source<T: Evented + 'static>(evented: T, task_waker: LocalWaker, int
         let token = get_source_token(index);
         let source = &executor.sources.borrow()[index];
         executor.poll.register(&source.evented, token, interest, PollOpt::oneshot()).expect("task registration failed");
-        debug!("register source: Token({:?})", token);
+        debug!("register source: {:?}", token);
         ret_token.set(Some(token))
     });
     ret_token_clone.get().expect("ret token is None")
