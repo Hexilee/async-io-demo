@@ -160,7 +160,9 @@ pub fn block_on<R, F>(main_task: F)
     EXECUTOR.with(move |executor: &Executor| {
         let mut pinned_task = Box::pinned(main_task);
         let mut events = Events::with_capacity(EVENT_CAP);
-        match pinned_task.as_mut().poll(&executor.main_waker()) {
+        let main_waker = executor.main_waker();
+        debug!("main_waker addr: {:p}", &main_waker);
+        match pinned_task.as_mut().poll(&main_waker) {
             task::Poll::Ready(result) => {
                 debug!("main task complete");
                 return;
@@ -173,7 +175,7 @@ pub fn block_on<R, F>(main_task: F)
                         match event.token() {
                             MAIN_TASK_TOKEN => {
                                 debug!("receive a main task event");
-                                match pinned_task.as_mut().poll(&executor.main_waker()) {
+                                match pinned_task.as_mut().poll(&main_waker) {
                                     task::Poll::Ready(result) => return,
                                     task::Poll::Pending => {
                                         debug!("main task pending again");
@@ -309,6 +311,7 @@ impl TcpListener {
     }
 
     fn poll_accept(&mut self, lw: &LocalWaker) -> task::Poll<io::Result<(TcpStream, SocketAddr)>> {
+        debug!("waker addr: {:p}", lw);
         if let None = self.accept_source_token {
             self.accept_source_token = Some(register_source(self.clone(), lw.clone(), Ready::readable()));
         }
