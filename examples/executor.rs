@@ -83,16 +83,16 @@ struct Task {
 }
 
 #[derive(Clone)]
-struct TcpListener{
+struct TcpListener {
     inner: Rc<net::TcpListener>,
-    accept_source_token: Option<Token>
+    accept_source_token: Option<Token>,
 }
 
 #[derive(Clone)]
 struct TcpStream {
     inner: Rc<net::TcpStream>,
     read_source_token: Option<Token>,
-    write_source_token: Option<Token>
+    write_source_token: Option<Token>,
 }
 
 struct TcpAcceptState<'a> {
@@ -285,7 +285,7 @@ impl Evented for TcpStream {
 
 impl TcpListener {
     fn new(listener: mio::net::TcpListener) -> TcpListener {
-        TcpListener{inner: Rc::new(listener), accept_source_token: None}
+        TcpListener { inner: Rc::new(listener), accept_source_token: None }
     }
 
     fn poll_accept(&mut self, lw: &LocalWaker) -> task::Poll<io::Result<(TcpStream, SocketAddr)>> {
@@ -295,6 +295,7 @@ impl TcpListener {
         match self.inner.accept() {
             Ok((stream, addr)) => task::Poll::Ready(Ok((TcpStream::new(stream), addr))),
             Err(ref err) if err.kind() == io::ErrorKind::WouldBlock => {
+                unsafe { reregister_source(self.accept_source_token.unwrap(), Ready::readable()) };
                 task::Poll::Pending
             }
             Err(err) => task::Poll::Ready(Err(err))
@@ -317,13 +318,13 @@ impl TcpListener {
     }
 
     pub fn accept(&mut self) -> TcpAcceptState {
-        TcpAcceptState{listener: self}
+        TcpAcceptState { listener: self }
     }
 }
 
 impl TcpStream {
     pub fn new(connected: mio::net::TcpStream) -> TcpStream {
-        TcpStream { inner: Rc::new(connected), read_source_token: None, write_source_token: None}
+        TcpStream { inner: Rc::new(connected), read_source_token: None, write_source_token: None }
     }
 
     pub fn local_addr(&self) -> io::Result<SocketAddr> {
