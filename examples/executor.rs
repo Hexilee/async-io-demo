@@ -134,7 +134,7 @@ impl Executor {
     pub fn new() -> Result<Self, Error> {
         let poll = Poll::new()?;
         let (awake_registration, awake_readiness) = Registration::new2();
-        poll.register(&awake_registration, MAIN_TASK_TOKEN, Ready::all(), PollOpt::level())?;
+        poll.register(&awake_registration, MAIN_TASK_TOKEN, Ready::all(), PollOpt::edge())?;
         Ok(Executor {
             poll,
             main_waker: InnerWaker { awake_registration, awake_readiness },
@@ -212,7 +212,6 @@ pub fn block_on<R, F>(main_task: F)
                             _ => {}
                         }
                     }
-                    executor.main_waker.awake_readiness.set_readiness(Ready::empty()).expect("main readiness setting empty failed");
                 }
             }
         }
