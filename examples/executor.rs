@@ -166,7 +166,7 @@ pub fn block_on<R, F>(main_task: F)
             task::Poll::Ready(result) => {
                 debug!("main task complete");
                 return;
-            },
+            }
             task::Poll::Pending => {
                 debug!("main task pending");
                 loop {
@@ -204,6 +204,7 @@ pub fn block_on<R, F>(main_task: F)
                                     task::Poll::Ready(_) => {
                                         debug!("task({:?}) complete", token);
                                         executor.poll.deregister(&task.waker.awake_registration).expect("task deregister failed");
+                                        tasks.remove(index);
                                     }
                                     task::Poll::Pending => {
                                         debug!("task({:?}) pending", token);
@@ -276,9 +277,10 @@ unsafe fn reregister_source(token: Token, interest: Ready) {
 unsafe fn drop_source(token: Token) {
     EXECUTOR.with(move |executor: &Executor| {
         let index = index_from_source_token(token);
-        let source = &executor.sources.borrow()[index];
+        let mut sources = executor.sources.borrow_mut();
+        let source = &sources[index];
         executor.poll.deregister(&source.evented).expect("task registration failed");
-        &executor.sources.borrow_mut().remove(index);
+        sources.remove(index);
     });
 }
 
@@ -415,7 +417,7 @@ impl TcpStream {
 impl Drop for TcpStream {
     fn drop(&mut self) {
         if let Some(token) = self.write_source_token {
-            unsafe{drop_source(token)};
+            unsafe { drop_source(token) };
         }
     }
 }
@@ -447,15 +449,15 @@ fn main() {
     env_logger::init();
     block_on(async {
         let mut listener = TcpListener::bind(&"127.0.0.1:7878".parse().unwrap()).expect("TcpListener bind fail");
-        info!("Listening on 127.0.0.1:7878");
-        while let Ok((mut stream, addr)) = await!(listener.accept()) {
-            info!("connection from {}", addr);
-            spawn(async move {
-                let client_hello = await!(stream.read()).unwrap();
-                let read_length = client_hello.len();
-                let write_length = await!(stream.write(client_hello)).unwrap();
-                assert_eq!(read_length, write_length);
-            });
-        }
-    })
+    info!("Listening on 127.0.0.1:7878");
+    while let Ok((mut stream, addr)) = await!(listener.accept()) {
+        info!("connection from {}", addr);
+        spawn(async move {
+            let client_hello = await!(stream.read()).unwrap();
+            let read_length = client_hello.len();
+            let write_length = await!(stream.write(client_hello)).unwrap();
+            assert_eq!(read_length, write_length);
+        });
+    }
+})
 }
