@@ -255,7 +255,7 @@ fn register_source<T: Evented + 'static>(evented: T, task_waker: LocalWaker, int
         debug!("new sources: Index({})", index);
         let token = get_source_token(index);
         let source = &executor.sources.borrow()[index];
-        executor.poll.register(&source.evented, token, interest, PollOpt::edge()).expect("task registration failed");
+        executor.poll.register(&source.evented, token, interest, PollOpt::edge()).expect("source registration failed");
         debug!("register source: {:?}", token);
         ret_token.set(Some(token))
     });
@@ -268,7 +268,7 @@ unsafe fn reregister_source(token: Token, interest: Ready) {
         let index = index_from_source_token(token);
         debug!("reregister source: Index({})", index);
         let source = &executor.sources.borrow()[index];
-        executor.poll.reregister(&source.evented, token, interest, PollOpt::edge()).expect("task registration failed");
+        executor.poll.reregister(&source.evented, token, interest, PollOpt::edge()).expect("source reregistration failed");
         debug!("source addr: {:p}", source);
     });
 }
@@ -279,7 +279,7 @@ unsafe fn drop_source(token: Token) {
         let index = index_from_source_token(token);
         let mut sources = executor.sources.borrow_mut();
         let source = &sources[index];
-        executor.poll.deregister(&source.evented).expect("task registration failed");
+        executor.poll.deregister(&source.evented).expect(&format!("source({:?}) drop failed", token));
         sources.remove(index);
     });
 }
