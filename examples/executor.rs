@@ -2,7 +2,6 @@
 #![feature(async_await)]
 #![feature(await_macro)]
 #![feature(futures_api)]
-#![feature(fnbox)]
 #![feature(pin)]
 
 #[macro_use]
