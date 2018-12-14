@@ -382,12 +382,12 @@ impl TcpStream {
         if let None = self.read_source_token {
             self.read_source_token = Some(register_source(self.clone(), lw.clone(), Ready::readable()));
         }
-        let mut ret = Vec::new();
+        let mut ret = [0u8; 1024];
         let ref_cell: &RefCell<net::TcpStream> = self.inner.borrow();
-        match ref_cell.borrow_mut().read_to_end(&mut ret) {
+        match ref_cell.borrow_mut().read(&mut ret) {
             Ok(_) => {
                 debug!("stream read complete");
-                task::Poll::Ready(Ok(ret))
+                task::Poll::Ready(Ok(ret.to_vec()))
             }
             Err(ref err) if err.kind() == io::ErrorKind::WouldBlock => {
                 debug!("stream read pending");
