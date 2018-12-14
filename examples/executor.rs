@@ -279,7 +279,7 @@ unsafe fn drop_source(token: Token) {
         let index = index_from_source_token(token);
         let mut sources = executor.sources.borrow_mut();
         let source = &sources[index];
-        executor.poll.deregister(&source.evented).expect(&format!("source({:?}) drop failed", token));
+        executor.poll.deregister(&source.evented);
         sources.remove(index);
     });
 }
