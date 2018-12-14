@@ -295,7 +295,7 @@ impl TcpListener {
     pub fn set_ttl(&self, ttl: u32) -> io::Result<()> {
         self.0.set_ttl(ttl)
     }
-    fn poll_accept(&mut self, lw: &LocalWaker) -> task::Poll<io::Result<(TcpStream, SocketAddr)>> {
+    fn poll_accept(&self, lw: &LocalWaker) -> task::Poll<io::Result<(TcpStream, SocketAddr)>> {
         let token = register_source(self.clone(), lw.clone(), Ready::readable());
         match self.0.accept() {
             Ok((stream, addr)) => task::Poll::Ready(Ok((TcpStream::new(stream), addr))),
@@ -371,7 +371,7 @@ impl TcpStream {
 
 impl Read for TcpStream {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        (&mut self.0).read(buf)
+        self.0.read(buf)
     }
 }
 
@@ -387,7 +387,7 @@ impl Write for TcpStream {
 
 impl <'a> Future for TcpAcceptState<'a> {
     type Output = io::Result<(TcpStream, SocketAddr)>;
-    fn poll(mut self: Pin<&mut Self>, lw: &LocalWaker) -> task::Poll<<Self as Future>::Output> {
+    fn poll(self: Pin<&mut Self>, lw: &LocalWaker) -> task::Poll<<Self as Future>::Output> {
         self.listener.poll_accept(lw)
     }
 }
