@@ -91,7 +91,7 @@ struct TcpStream {
 }
 
 struct TcpAcceptState<'a> {
-    listener: &'a mut TcpListener
+    listener: &'a TcpListener
 }
 
 struct StreamReadState<'a> {
@@ -279,13 +279,24 @@ impl Evented for TcpStream {
 }
 
 impl TcpListener {
+    fn new(listener: mio::net::TcpListener) -> TcpListener {
+        TcpListener(Rc::new(listener))
+    }
+
+    fn poll_accept(&self, lw: &LocalWaker) -> task::Poll<io::Result<(TcpStream, SocketAddr)>> {
+        let token = register_source(self.clone(), lw.clone(), Ready::readable());
+        match self.0.accept() {
+            Ok((stream, addr)) => task::Poll::Ready(Ok((TcpStream::new(stream), addr))),
+            Err(ref err) if err.kind() == io::ErrorKind::WouldBlock => {
+                task::Poll::Pending
+            }
+            Err(err) => task::Poll::Ready(Err(err))
+        }
+    }
+
     pub fn bind(addr: &SocketAddr) -> io::Result<TcpListener> {
         let l = mio::net::TcpListener::bind(addr)?;
         Ok(TcpListener::new(l))
-    }
-
-    fn new(listener: mio::net::TcpListener) -> TcpListener {
-        TcpListener(Rc::new(listener))
     }
 
     pub fn local_addr(&self) -> io::Result<SocketAddr> {
@@ -297,21 +308,15 @@ impl TcpListener {
     pub fn set_ttl(&self, ttl: u32) -> io::Result<()> {
         self.0.set_ttl(ttl)
     }
-    fn poll_accept(&self, lw: &LocalWaker) -> task::Poll<io::Result<(TcpStream, SocketAddr)>> {
-        let token = register_source(self.clone(), lw.clone(), Ready::readable());
-        match self.0.accept() {
-            Ok((stream, addr)) => task::Poll::Ready(Ok((TcpStream::new(stream), addr))),
-            Err(ref err) if err.kind() == io::ErrorKind::WouldBlock => {
-                task::Poll::Pending
-            }
-            Err(err) => task::Poll::Ready(Err(err))
-        }
+
+    pub fn accept(&self) -> TcpAcceptState {
+        TcpAcceptState{listener: self}
     }
 }
 
 impl TcpStream {
     pub(crate) fn new(connected: mio::net::TcpStream) -> TcpStream {
-        TcpStream{inner: Rc::new(connected)}
+        TcpStream { inner: Rc::new(connected) }
     }
 
     pub fn local_addr(&self) -> io::Result<SocketAddr> {
@@ -370,24 +375,26 @@ impl TcpStream {
         self.inner.set_linger(dur)
     }
 
-    pub(crate) fn read_poll(&mut self, lw: &LocalWaker) -> task::Poll<io::Result<usize>> {
-        task::Poll::Pending
-    }
-
-    pub(crate) fn write_poll(&mut self, lw: &LocalWaker) -> task::Poll<io::Result<usize>> {
-        task::Poll::Pending
-    }
-
     pub fn read(&mut self, buf: &mut [u8]) -> StreamReadState {
-        StreamReadState{stream: self}
+        StreamReadState { stream: self }
     }
 
     pub fn write(&mut self, buf: &mut [u8]) -> StreamReadState {
-        StreamReadState{stream: self}
+        StreamReadState { stream: self }
     }
 }
 
-impl <'a> Future for TcpAcceptState<'a> {
+impl TcpStream {
+    fn read_poll(&mut self, lw: &LocalWaker) -> task::Poll<io::Result<usize>> {
+        task::Poll::Pending
+    }
+
+    fn write_poll(&mut self, lw: &LocalWaker) -> task::Poll<io::Result<usize>> {
+        task::Poll::Pending
+    }
+}
+
+impl<'a> Future for TcpAcceptState<'a> {
     type Output = io::Result<(TcpStream, SocketAddr)>;
     fn poll(self: Pin<&mut Self>, lw: &LocalWaker) -> task::Poll<<Self as Future>::Output> {
         self.listener.poll_accept(lw)
