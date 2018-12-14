@@ -5,6 +5,9 @@
 #![feature(fnbox)]
 #![feature(pin)]
 
+#[macro_use]
+extern crate log;
+
 use crossbeam_channel::{unbounded, Sender, Receiver};
 use std::future::Future;
 use std::io::{Read, Write, self};
@@ -403,11 +406,12 @@ impl<'a> Future for StreamWriteState<'a> {
 
 
 fn main() {
+    env_logger::init();
     block_on(async {
         let mut listener = TcpListener::bind(&"127.0.0.1:7878".parse().unwrap()).expect("TcpListener bind fail");
-        println!("Listening on 127.0.0.1:7878");
+        info!("Listening on 127.0.0.1:7878");
         while let Ok((stream, addr)) = await!(listener.accept()) {
-            println!("connection from {}", addr);
+            info!("connection from {}", addr);
         }
     })
 }
