@@ -90,7 +90,7 @@ struct TcpListener {
 
 #[derive(Clone)]
 struct TcpStream {
-    inner: Rc<net::TcpStream>,
+    inner: Rc<RefCell<net::TcpStream>>,
     read_source_token: Option<Token>,
     write_source_token: Option<Token>,
 }
@@ -100,11 +100,11 @@ struct TcpAcceptState<'a> {
 }
 
 struct StreamReadState<'a> {
-    stream: &'a mut TcpStream
+    stream: &'a mut TcpStream,
 }
 
 struct StreamWriteState<'a> {
-    stream: &'a mut TcpStream
+    stream: &'a mut TcpStream,
 }
 
 unsafe impl UnsafeWake for InnerWaker {
@@ -271,15 +271,21 @@ impl Evented for TcpListener {
 
 impl Evented for TcpStream {
     fn register(&self, poll: &Poll, token: Token, interest: Ready, opts: PollOpt) -> io::Result<()> {
-        self.inner.register(poll, token, interest, opts)
+        let ref_cell: &RefCell<net::TcpStream> = self.inner.borrow();
+        let stream = ref_cell.borrow();
+        stream.register(poll, token, interest, opts)
     }
 
     fn reregister(&self, poll: &Poll, token: Token, interest: Ready, opts: PollOpt) -> io::Result<()> {
-        self.inner.reregister(poll, token, interest, opts)
+        let ref_cell: &RefCell<net::TcpStream> = self.inner.borrow();
+        let stream = ref_cell.borrow();
+        stream.reregister(poll, token, interest, opts)
     }
 
     fn deregister(&self, poll: &Poll) -> io::Result<()> {
-        self.inner.deregister(poll)
+        let ref_cell: &RefCell<net::TcpStream> = self.inner.borrow();
+        let stream = ref_cell.borrow();
+        stream.deregister(poll)
     }
 }
 
@@ -324,77 +330,33 @@ impl TcpListener {
 
 impl TcpStream {
     pub fn new(connected: mio::net::TcpStream) -> TcpStream {
-        TcpStream { inner: Rc::new(connected), read_source_token: None, write_source_token: None }
+        TcpStream { inner: Rc::new(RefCell::new(connected)), read_source_token: None, write_source_token: None }
     }
 
-    pub fn local_addr(&self) -> io::Result<SocketAddr> {
-        self.inner.local_addr()
-    }
-
-    pub fn peer_addr(&self) -> io::Result<SocketAddr> {
-        self.inner.peer_addr()
-    }
-
-    pub fn nodelay(&self) -> io::Result<bool> {
-        self.inner.nodelay()
-    }
-
-    pub fn set_nodelay(&self, nodelay: bool) -> io::Result<()> {
-        self.inner.set_nodelay(nodelay)
-    }
-
-    pub fn recv_buffer_size(&self) -> io::Result<usize> {
-        self.inner.recv_buffer_size()
-    }
-
-    pub fn set_recv_buffer_size(&self, size: usize) -> io::Result<()> {
-        self.inner.set_recv_buffer_size(size)
-    }
-
-    pub fn send_buffer_size(&self) -> io::Result<usize> {
-        self.inner.send_buffer_size()
-    }
-
-    pub fn set_send_buffer_size(&self, size: usize) -> io::Result<()> {
-        self.inner.set_send_buffer_size(size)
-    }
-
-    pub fn keepalive(&self) -> io::Result<Option<Duration>> {
-        self.inner.keepalive()
-    }
-
-    pub fn set_keepalive(&self, keepalive: Option<Duration>) -> io::Result<()> {
-        self.inner.set_keepalive(keepalive)
-    }
-
-    pub fn ttl(&self) -> io::Result<u32> {
-        self.inner.ttl()
-    }
-
-    pub fn set_ttl(&self, ttl: u32) -> io::Result<()> {
-        self.inner.set_ttl(ttl)
-    }
-
-    pub fn linger(&self) -> io::Result<Option<Duration>> {
-        self.inner.linger()
-    }
-
-    pub fn set_linger(&self, dur: Option<Duration>) -> io::Result<()> {
-        self.inner.set_linger(dur)
-    }
-
-    pub fn read(&mut self, buf: &mut [u8]) -> StreamReadState {
+    pub fn read<'a>(&'a mut self, buf: &'a mut [u8]) -> StreamReadState<'a> {
         StreamReadState { stream: self }
     }
 
-    pub fn write(&mut self, buf: &mut [u8]) -> StreamReadState {
+    pub fn write<'a>(&'a mut self, buf: &'a mut [u8]) -> StreamReadState<'a> {
         StreamReadState { stream: self }
     }
 }
 
 impl TcpStream {
-    fn read_poll(&mut self, lw: &LocalWaker) -> task::Poll<io::Result<usize>> {
-        task::Poll::Pending
+    fn read_poll(&mut self, lw: &LocalWaker) -> task::Poll<io::Result<Vec<u8>>> {
+        if let None = self.read_source_token {
+            self.read_source_token = Some(register_source(self.clone(), lw.clone(), Ready::readable()));
+        }
+        let mut ret = Vec::new();
+        let ref_cell: &RefCell<net::TcpStream> = self.inner.borrow();
+        match ref_cell.borrow_mut().read_to_end(&mut ret) {
+            Ok(_) => task::Poll::Ready(Ok(ret)),
+            Err(ref err) if err.kind() == io::ErrorKind::WouldBlock => {
+                unsafe { reregister_source(self.read_source_token.unwrap(), Ready::readable()) };
+                task::Poll::Pending
+            }
+            Err(err) => task::Poll::Ready(Err(err))
+        }
     }
 
     fn write_poll(&mut self, lw: &LocalWaker) -> task::Poll<io::Result<usize>> {
@@ -410,7 +372,7 @@ impl<'a> Future for TcpAcceptState<'a> {
 }
 
 impl<'a> Future for StreamReadState<'a> {
-    type Output = io::Result<usize>;
+    type Output = io::Result<Vec<u8>>;
     fn poll(mut self: Pin<&mut Self>, lw: &LocalWaker) -> task::Poll<<Self as Future>::Output> {
         self.stream.read_poll(lw)
     }
@@ -419,7 +381,7 @@ impl<'a> Future for StreamReadState<'a> {
 impl<'a> Future for StreamWriteState<'a> {
     type Output = io::Result<usize>;
     fn poll(mut self: Pin<&mut Self>, lw: &LocalWaker) -> task::Poll<<Self as Future>::Output> {
-        self.stream.write_poll(lw)
+        self.stream.clone().write_poll(lw)
     }
 }
 
