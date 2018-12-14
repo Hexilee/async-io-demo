@@ -7,15 +7,13 @@
 #[macro_use]
 extern crate log;
 
-use crossbeam_channel::{unbounded, Sender, Receiver};
 use std::future::Future;
 use std::io::{Read, Write, self};
 use std::pin::Pin;
 use std::task::{LocalWaker, Waker, UnsafeWake, self};
-use std::borrow::{Borrow, BorrowMut};
+use std::borrow::{Borrow};
 use std::ptr::NonNull;
 use std::cell::{RefCell, Cell};
-use std::time::Duration;
 use std::rc::Rc;
 use std::net::SocketAddr;
 use slab::Slab;
@@ -153,9 +151,11 @@ thread_local! {
     static EXECUTOR: Executor = Executor::new().expect("initializing executor failed!")
 }
 
-pub fn block_on<R, F>(main_task: F)
+pub fn block_on<R, F>(main_task: F) -> R
     where R: Sized,
           F: Future<Output=R> {
+    let ret = Rc::new(Cell::new(None));
+    let ret_clone = ret.clone();
     EXECUTOR.with(move |executor: &Executor| {
         let mut pinned_task = Box::pinned(main_task);
         let mut events = Events::with_capacity(EVENT_CAP);
@@ -164,6 +164,7 @@ pub fn block_on<R, F>(main_task: F)
         match pinned_task.as_mut().poll(&main_waker) {
             task::Poll::Ready(result) => {
                 debug!("main task complete");
+                ret_clone.set(Some(result));
                 return;
             }
             task::Poll::Pending => {
@@ -178,7 +179,10 @@ pub fn block_on<R, F>(main_task: F)
                             MAIN_TASK_TOKEN => {
                                 debug!("receive a main task event");
                                 match pinned_task.as_mut().poll(&main_waker) {
-                                    task::Poll::Ready(result) => return,
+                                    task::Poll::Ready(result) => {
+                                        ret_clone.set(Some(result));
+                                        return;
+                                    }
                                     task::Poll::Pending => {
                                         debug!("main task pending again");
                                         continue;
@@ -218,6 +222,7 @@ pub fn block_on<R, F>(main_task: F)
             }
         }
     });
+    ret.replace(None).unwrap()
 }
 
 pub fn spawn<F: Future<Output=()> + 'static>(task: F) {
