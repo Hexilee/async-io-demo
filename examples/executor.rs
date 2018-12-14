@@ -161,25 +161,35 @@ pub fn block_on<R, F>(main_task: F)
         let mut pinned_task = Box::pinned(main_task);
         let mut events = Events::with_capacity(EVENT_CAP);
         match pinned_task.as_mut().poll(&executor.main_waker()) {
-            task::Poll::Ready(result) => return,
+            task::Poll::Ready(result) => {
+                debug!("main task complete");
+                return;
+            },
             task::Poll::Pending => {
+                debug!("main task pending");
                 loop {
                     executor.poll.poll(&mut events, Some(Duration::from_millis(POLL_TIME_OUT_MILL))).expect("polling failed");
                     for event in events.iter() {
                         match event.token() {
                             MAIN_TASK_TOKEN => {
+                                debug!("receive a main task event");
                                 match pinned_task.as_mut().poll(&executor.main_waker()) {
                                     task::Poll::Ready(result) => return,
-                                    task::Poll::Pending => continue
+                                    task::Poll::Pending => {
+                                        debug!("main task pending again");
+                                        continue;
+                                    }
                                 }
                             }
                             token if is_source(token) => {
+                                debug!("receive a source event: Token({:?})", token);
                                 let index = unsafe { index_from_source_token(token) };
                                 let source = &executor.sources.borrow_mut()[index];
                                 source.task_waker.wake();
                             }
 
                             token if is_task(token) => {
+                                debug!("receive a task event: Token({:?})", token);
                                 let index = unsafe { index_from_task_token(token) };
                                 let task = &mut executor.tasks.borrow_mut()[index];
                                 match task.inner_task.as_mut().poll(&task.waker.gen_local_waker()) {
@@ -234,6 +244,7 @@ fn register_source<T: Evented + 'static>(evented: T, task_waker: LocalWaker, int
         let token = get_source_token(index);
         let source = &executor.sources.borrow()[index];
         executor.poll.register(&source.evented, token, interest, PollOpt::oneshot()).expect("task registration failed");
+        debug!("register source: Token({:?})", token);
         ret_token.set(Some(token))
     });
     ret_token_clone.get().expect("ret token is None")
@@ -302,8 +313,12 @@ impl TcpListener {
             self.accept_source_token = Some(register_source(self.clone(), lw.clone(), Ready::readable()));
         }
         match self.inner.accept() {
-            Ok((stream, addr)) => task::Poll::Ready(Ok((TcpStream::new(stream), addr))),
+            Ok((stream, addr)) => {
+                debug!("accept stream from: {}", addr);
+                task::Poll::Ready(Ok((TcpStream::new(stream), addr)))
+            }
             Err(ref err) if err.kind() == io::ErrorKind::WouldBlock => {
+                debug!("accept would block");
                 unsafe { reregister_source(self.accept_source_token.unwrap(), Ready::readable()) };
                 task::Poll::Pending
             }
