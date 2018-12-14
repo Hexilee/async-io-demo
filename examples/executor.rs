@@ -204,7 +204,6 @@ pub fn block_on<R, F>(main_task: F)
                                     task::Poll::Ready(_) => {
                                         debug!("task({:?}) complete", token);
                                         executor.poll.deregister(&task.waker.awake_registration).expect("task deregister failed");
-                                        tasks.remove(index);
                                     }
                                     task::Poll::Pending => {
                                         debug!("task({:?}) pending", token);
@@ -409,6 +408,14 @@ impl TcpStream {
                 task::Poll::Pending
             }
             Err(err) => task::Poll::Ready(Err(err))
+        }
+    }
+}
+
+impl Drop for TcpStream {
+    fn drop(&mut self) {
+        if let Some(token) = self.write_source_token {
+            unsafe{drop_source(token)};
         }
     }
 }
