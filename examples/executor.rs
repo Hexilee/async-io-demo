@@ -96,7 +96,7 @@ struct TcpStream {
 }
 
 struct TcpAcceptState<'a> {
-    listener: &'a TcpListener
+    listener: &'a mut TcpListener
 }
 
 struct StreamReadState<'a> {
@@ -288,8 +288,10 @@ impl TcpListener {
         TcpListener{inner: Rc::new(listener), accept_source_token: None}
     }
 
-    fn poll_accept(&self, lw: &LocalWaker) -> task::Poll<io::Result<(TcpStream, SocketAddr)>> {
-        let token = register_source(self.clone(), lw.clone(), Ready::readable());
+    fn poll_accept(&mut self, lw: &LocalWaker) -> task::Poll<io::Result<(TcpStream, SocketAddr)>> {
+        if let None = self.accept_source_token {
+            self.accept_source_token = Some(register_source(self.clone(), lw.clone(), Ready::readable()));
+        }
         match self.inner.accept() {
             Ok((stream, addr)) => task::Poll::Ready(Ok((TcpStream::new(stream), addr))),
             Err(ref err) if err.kind() == io::ErrorKind::WouldBlock => {
@@ -314,7 +316,7 @@ impl TcpListener {
         self.inner.set_ttl(ttl)
     }
 
-    pub fn accept(&self) -> TcpAcceptState {
+    pub fn accept(&mut self) -> TcpAcceptState {
         TcpAcceptState{listener: self}
     }
 }
@@ -401,7 +403,7 @@ impl TcpStream {
 
 impl<'a> Future for TcpAcceptState<'a> {
     type Output = io::Result<(TcpStream, SocketAddr)>;
-    fn poll(self: Pin<&mut Self>, lw: &LocalWaker) -> task::Poll<<Self as Future>::Output> {
+    fn poll(mut self: Pin<&mut Self>, lw: &LocalWaker) -> task::Poll<<Self as Future>::Output> {
         self.listener.poll_accept(lw)
     }
 }
