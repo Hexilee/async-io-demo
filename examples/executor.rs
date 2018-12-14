@@ -61,25 +61,25 @@ const fn is_task(token: Token) -> bool {
 type PinFuture<T> = Pin<Box<dyn Future<Output=T>>>;
 
 struct Executor {
-    pub(crate) poll: Poll,
-    pub(crate) main_waker: InnerWaker,
-    pub(crate) tasks: RefCell<Slab<Task>>,
-    pub(crate) sources: RefCell<Slab<Source>>,
+    poll: Poll,
+    main_waker: InnerWaker,
+    tasks: RefCell<Slab<Task>>,
+    sources: RefCell<Slab<Source>>,
 }
 
 struct InnerWaker {
     awake_readiness: SetReadiness,
-    pub(crate) awake_registration: Registration,
+    awake_registration: Registration,
 }
 
 struct Source {
-    pub(crate) task_waker: LocalWaker,
-    pub(crate) evented: Box<dyn Evented>,
+    task_waker: LocalWaker,
+    evented: Box<dyn Evented>,
 }
 
 struct Task {
-    pub(crate) waker: InnerWaker,
-    pub(crate) inner_task: PinFuture<()>,
+    waker: InnerWaker,
+    inner_task: PinFuture<()>,
 }
 
 #[derive(Clone)]
