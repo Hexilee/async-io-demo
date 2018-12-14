@@ -105,6 +105,7 @@ struct StreamReadState<'a> {
 
 struct StreamWriteState<'a> {
     stream: &'a mut TcpStream,
+    data: Vec<u8>,
 }
 
 unsafe impl UnsafeWake for InnerWaker {
@@ -333,12 +334,12 @@ impl TcpStream {
         TcpStream { inner: Rc::new(RefCell::new(connected)), read_source_token: None, write_source_token: None }
     }
 
-    pub fn read<'a>(&'a mut self, buf: &'a mut [u8]) -> StreamReadState<'a> {
+    pub fn read(&mut self) -> StreamReadState {
         StreamReadState { stream: self }
     }
 
-    pub fn write<'a>(&'a mut self, buf: &'a mut [u8]) -> StreamReadState<'a> {
-        StreamReadState { stream: self }
+    pub fn write(&mut self, data: Vec<u8>) -> StreamWriteState {
+        StreamWriteState { stream: self, data }
     }
 }
 
@@ -359,8 +360,19 @@ impl TcpStream {
         }
     }
 
-    fn write_poll(&mut self, lw: &LocalWaker) -> task::Poll<io::Result<usize>> {
-        task::Poll::Pending
+    fn write_poll(&mut self, data: &[u8], lw: &LocalWaker) -> task::Poll<io::Result<usize>> {
+        if let None = self.write_source_token {
+            self.write_source_token = Some(register_source(self.clone(), lw.clone(), Ready::writable()));
+        }
+        let ref_cell: &RefCell<net::TcpStream> = self.inner.borrow();
+        match ref_cell.borrow_mut().write(data) {
+            Ok(n) => task::Poll::Ready(Ok(n)),
+            Err(ref err) if err.kind() == io::ErrorKind::WouldBlock => {
+                unsafe { reregister_source(self.write_source_token.unwrap(), Ready::writable()) };
+                task::Poll::Pending
+            }
+            Err(err) => task::Poll::Ready(Err(err))
+        }
     }
 }
 
@@ -381,7 +393,8 @@ impl<'a> Future for StreamReadState<'a> {
 impl<'a> Future for StreamWriteState<'a> {
     type Output = io::Result<usize>;
     fn poll(mut self: Pin<&mut Self>, lw: &LocalWaker) -> task::Poll<<Self as Future>::Output> {
-        self.stream.clone().write_poll(lw)
+        let data = self.data.clone();
+        self.stream.write_poll(data.as_slice(), lw)
     }
 }
 
