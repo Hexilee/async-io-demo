@@ -86,7 +86,9 @@ struct Task {
 struct TcpListener(Rc<net::TcpListener>);
 
 #[derive(Clone)]
-struct TcpStream(Rc<net::TcpStream>);
+struct TcpStream {
+    inner: Rc<net::TcpStream>
+}
 
 struct TcpAcceptState<'a> {
     listener: &'a mut TcpListener
