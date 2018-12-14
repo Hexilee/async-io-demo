@@ -200,11 +200,13 @@ pub fn block_on<R, F>(main_task: F)
                                 let index = unsafe { index_from_task_token(token) };
                                 let task = &mut executor.tasks.borrow_mut()[index];
                                 match task.inner_task.as_mut().poll(&task.waker.gen_local_waker()) {
-                                    task::Poll::Ready(result) => {
+                                    task::Poll::Ready(_) => {
+                                        debug!("task({:?}) complete", token);
                                         executor.poll.deregister(&task.waker.awake_registration).expect("task deregister failed");
                                         executor.tasks.borrow_mut().remove(index);
                                     }
                                     task::Poll::Pending => {
+                                        debug!("task({:?}) pending", token);
                                         continue;
                                     }
                                 }
@@ -227,12 +229,15 @@ pub fn spawn<F: Future<Output=()> + 'static>(task: F) {
         });
         let token = get_task_token(index);
         let task = &mut executor.tasks.borrow_mut()[index];
+        debug!("task({:?}) spawn", token);
         match task.inner_task.as_mut().poll(&task.waker.gen_local_waker()) {
-            task::Poll::Ready(result) => {
+            task::Poll::Ready(_) => {
+                debug!("task({:?}) complete when spawn", token);
                 executor.tasks.borrow_mut().remove(index);
             }
             task::Poll::Pending => {
                 executor.poll.register(&task.waker.awake_registration, token, Ready::all(), PollOpt::edge()).expect("task registration failed");
+                debug!("task({:?}) pending", token);
             }
         }
     });
