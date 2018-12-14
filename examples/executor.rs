@@ -377,6 +377,15 @@ impl TcpStream {
     pub fn write_str(&mut self, data: &str) -> StreamWriteState {
         StreamWriteState { stream: self, data: data.as_bytes().to_vec() }
     }
+
+    pub fn close(self) {
+        if let Some(token) = self.read_source_token {
+            unsafe { drop_source(token) };
+        }
+        if let Some(token) = self.write_source_token {
+            unsafe { drop_source(token) };
+        }
+    }
 }
 
 impl TcpStream {
@@ -410,14 +419,6 @@ impl TcpStream {
                 task::Poll::Pending
             }
             Err(err) => task::Poll::Ready(Err(err))
-        }
-    }
-}
-
-impl Drop for TcpStream {
-    fn drop(&mut self) {
-        if let Some(token) = self.write_source_token {
-            unsafe { drop_source(token) };
         }
     }
 }
@@ -457,6 +458,7 @@ fn main() {
             let read_length = client_hello.len();
             let write_length = await!(stream.write(client_hello)).unwrap();
             assert_eq!(read_length, write_length);
+            stream.close();
         });
     }
 })
