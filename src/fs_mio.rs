@@ -1,5 +1,3 @@
-#![feature(fnbox)]
-
 use crossbeam_channel::{unbounded, Sender, TryRecvError};
 use std::fs::File;
 use std::io::{Read};
@@ -137,20 +135,4 @@ pub enum TaskResult {
     Exit,
     Open(File, FileCallback, Fs),
     ReadToString(String, StringCallback, Fs),
-}
-
-
-const TEST_FILE_VALUE: &str = "Hello, World!";
-
-fn main() -> Result<(), Error> {
-    let (fs, fs_handler) = fs_async();
-    fs.open("./examples/test.txt", |file, fs| {
-        fs.read_to_string(file, |value, fs| {
-            assert_eq!(TEST_FILE_VALUE, &value);
-            fs.println(value)?;
-            fs.close()
-        })
-    })?;
-    fs_handler.join()?;
-    Ok(())
 }
