@@ -1,16 +1,14 @@
 #![feature(arbitrary_self_types)]
+#![feature(async_await)]
 #![feature(futures_api)]
 #![feature(fnbox)]
 #![feature(pin)]
 
 use crossbeam_channel::{unbounded, Sender, Receiver};
 use std::future::Future;
-use std::fs::File;
 use std::io::{Read, Write, self};
-use std::boxed::FnBox;
 use std::pin::Pin;
 use std::task::{LocalWaker, Waker, UnsafeWake, self};
-use std::thread;
 use std::borrow::{Borrow, BorrowMut};
 use std::ptr::NonNull;
 use std::cell::{RefCell, Cell};
@@ -21,7 +19,7 @@ use slab::Slab;
 use mio::*;
 use failure::Error;
 
-const MAX_RESOURCE_NUM: usize = std::usize::MAX;
+const MAX_RESOURCE_NUM: usize = 1 << 31;
 const MAIN_TASK_TOKEN: Token = Token(MAX_RESOURCE_NUM);
 const EVENT_CAP: usize = 1024;
 const POLL_TIME_OUT_MILL: u64 = 100;
@@ -403,4 +401,8 @@ impl<'a> Future for StreamWriteState<'a> {
 }
 
 
-fn main() {}
+fn main() {
+    block_on(async {
+        println!("hello world!")
+    })
+}
