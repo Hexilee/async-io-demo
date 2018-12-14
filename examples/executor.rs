@@ -249,7 +249,7 @@ fn register_source<T: Evented + 'static>(evented: T, task_waker: LocalWaker, int
         debug!("new sources: Index({})", index);
         let token = get_source_token(index);
         let source = &executor.sources.borrow()[index];
-        executor.poll.register(&source.evented, token, interest, PollOpt::oneshot()).expect("task registration failed");
+        executor.poll.register(&source.evented, token, interest, PollOpt::edge()).expect("task registration failed");
         debug!("register source: {:?}", token);
         ret_token.set(Some(token))
     });
@@ -262,7 +262,7 @@ unsafe fn reregister_source(token: Token, interest: Ready) {
         let index = index_from_source_token(token);
         debug!("reregister source: Index({})", index);
         let source = &executor.sources.borrow()[index];
-        executor.poll.reregister(&source.evented, token, interest, PollOpt::oneshot()).expect("task registration failed");
+        executor.poll.reregister(&source.evented, token, interest, PollOpt::edge()).expect("task registration failed");
         debug!("source addr: {:p}", source);
     });
 }
@@ -328,7 +328,6 @@ impl TcpListener {
             }
             Err(ref err) if err.kind() == io::ErrorKind::WouldBlock => {
                 debug!("accept would block");
-                unsafe { reregister_source(self.accept_source_token.unwrap(), Ready::readable()) };
                 task::Poll::Pending
             }
             Err(err) => task::Poll::Ready(Err(err))
@@ -383,7 +382,6 @@ impl TcpStream {
         match ref_cell.borrow_mut().read_to_end(&mut ret) {
             Ok(_) => task::Poll::Ready(Ok(ret)),
             Err(ref err) if err.kind() == io::ErrorKind::WouldBlock => {
-                unsafe { reregister_source(self.read_source_token.unwrap(), Ready::readable()) };
                 task::Poll::Pending
             }
             Err(err) => task::Poll::Ready(Err(err))
@@ -398,7 +396,6 @@ impl TcpStream {
         match ref_cell.borrow_mut().write(data) {
             Ok(n) => task::Poll::Ready(Ok(n)),
             Err(ref err) if err.kind() == io::ErrorKind::WouldBlock => {
-                unsafe { reregister_source(self.write_source_token.unwrap(), Ready::writable()) };
                 task::Poll::Pending
             }
             Err(err) => task::Poll::Ready(Err(err))
