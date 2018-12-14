@@ -1,3 +1,4 @@
+#![feature(arbitrary_self_types)]
 #![feature(futures_api)]
 #![feature(fnbox)]
 #![feature(pin)]
@@ -5,12 +6,12 @@
 use crossbeam_channel::{unbounded, Sender, Receiver};
 use std::future::Future;
 use std::fs::File;
-use std::io::{Read, self};
+use std::io::{Read, Write, self};
 use std::boxed::FnBox;
 use std::pin::Pin;
 use std::task::{LocalWaker, Waker, UnsafeWake, self};
 use std::thread;
-use std::borrow::Borrow;
+use std::borrow::{Borrow, BorrowMut};
 use std::ptr::NonNull;
 use std::cell::{RefCell, Cell};
 use std::time::Duration;
@@ -42,7 +43,7 @@ unsafe fn index_from_source_token(token: Token) -> usize {
 }
 
 // panic when token is not ord
-fn index_from_task_token(token: Token) -> usize {
+unsafe fn index_from_task_token(token: Token) -> usize {
     if !is_task(token) {
         panic!(format!("not a task token: {}", token.0));
     }
@@ -86,6 +87,18 @@ struct TcpListener(Rc<net::TcpListener>);
 
 #[derive(Clone)]
 struct TcpStream(Rc<net::TcpStream>);
+
+struct TcpAcceptState<'a> {
+    listener: &'a mut TcpListener
+}
+
+struct StreamReadState<'a> {
+    stream: &'a mut TcpStream
+}
+
+struct StreamWriteState<'a> {
+    stream: &'a mut TcpStream
+}
 
 unsafe impl UnsafeWake for InnerWaker {
     unsafe fn clone_raw(&self) -> Waker {
@@ -353,6 +366,29 @@ impl TcpStream {
 
     pub fn set_linger(&self, dur: Option<Duration>) -> io::Result<()> {
         self.0.set_linger(dur)
+    }
+}
+
+impl Read for TcpStream {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        (&mut self.0).read(buf)
+    }
+}
+
+impl Write for TcpStream {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        (&mut self.0).write(buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        (&mut self.0).flush()
+    }
+}
+
+impl <'a> Future for TcpAcceptState<'a> {
+    type Output = io::Result<(TcpStream, SocketAddr)>;
+    fn poll(mut self: Pin<&mut Self>, lw: &LocalWaker) -> task::Poll<<Self as Future>::Output> {
+        self.listener.poll_accept(lw)
     }
 }
 
