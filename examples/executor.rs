@@ -83,11 +83,15 @@ struct Task {
 }
 
 #[derive(Clone)]
-struct TcpListener(Rc<net::TcpListener>);
+struct TcpListener{
+    inner: Rc<net::TcpListener>,
+    readiness: Ready
+}
 
 #[derive(Clone)]
 struct TcpStream {
-    inner: Rc<net::TcpStream>
+    inner: Rc<net::TcpStream>,
+    readiness: Ready
 }
 
 struct TcpAcceptState<'a> {
@@ -252,15 +256,15 @@ unsafe fn drop_source(token: Token) {
 
 impl Evented for TcpListener {
     fn register(&self, poll: &Poll, token: Token, interest: Ready, opts: PollOpt) -> io::Result<()> {
-        self.0.register(poll, token, interest, opts)
+        self.inner.register(poll, token, interest, opts)
     }
 
     fn reregister(&self, poll: &Poll, token: Token, interest: Ready, opts: PollOpt) -> io::Result<()> {
-        self.0.reregister(poll, token, interest, opts)
+        self.inner.reregister(poll, token, interest, opts)
     }
 
     fn deregister(&self, poll: &Poll) -> io::Result<()> {
-        self.0.deregister(poll)
+        self.inner.deregister(poll)
     }
 }
 
@@ -280,12 +284,12 @@ impl Evented for TcpStream {
 
 impl TcpListener {
     fn new(listener: mio::net::TcpListener) -> TcpListener {
-        TcpListener(Rc::new(listener))
+        TcpListener{inner: Rc::new(listener), readiness: Ready::empty()}
     }
 
     fn poll_accept(&self, lw: &LocalWaker) -> task::Poll<io::Result<(TcpStream, SocketAddr)>> {
         let token = register_source(self.clone(), lw.clone(), Ready::readable());
-        match self.0.accept() {
+        match self.inner.accept() {
             Ok((stream, addr)) => task::Poll::Ready(Ok((TcpStream::new(stream), addr))),
             Err(ref err) if err.kind() == io::ErrorKind::WouldBlock => {
                 task::Poll::Pending
@@ -300,13 +304,13 @@ impl TcpListener {
     }
 
     pub fn local_addr(&self) -> io::Result<SocketAddr> {
-        self.0.local_addr()
+        self.inner.local_addr()
     }
     pub fn ttl(&self) -> io::Result<u32> {
-        self.0.ttl()
+        self.inner.ttl()
     }
     pub fn set_ttl(&self, ttl: u32) -> io::Result<()> {
-        self.0.set_ttl(ttl)
+        self.inner.set_ttl(ttl)
     }
 
     pub fn accept(&self) -> TcpAcceptState {
@@ -315,8 +319,8 @@ impl TcpListener {
 }
 
 impl TcpStream {
-    pub(crate) fn new(connected: mio::net::TcpStream) -> TcpStream {
-        TcpStream { inner: Rc::new(connected) }
+    pub fn new(connected: mio::net::TcpStream) -> TcpStream {
+        TcpStream { inner: Rc::new(connected), readiness: Ready::empty() }
     }
 
     pub fn local_addr(&self) -> io::Result<SocketAddr> {
