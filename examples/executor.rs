@@ -205,7 +205,7 @@ pub fn block_on<R, F>(main_task: F)
                                         executor.tasks.borrow_mut().remove(index);
                                     }
                                     task::Poll::Pending => {
-                                        task.waker.awake_readiness.set_readiness(Ready::empty()).expect("readiness setting empty failed");
+                                        continue;
                                     }
                                 }
                             }
@@ -232,7 +232,7 @@ pub fn spawn<F: Future<Output=()> + 'static>(task: F) {
                 executor.tasks.borrow_mut().remove(index);
             }
             task::Poll::Pending => {
-                executor.poll.register(&task.waker.awake_registration, token, Ready::all(), PollOpt::level()).expect("task registration failed");
+                executor.poll.register(&task.waker.awake_registration, token, Ready::all(), PollOpt::edge()).expect("task registration failed");
             }
         }
     });
