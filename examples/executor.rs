@@ -238,7 +238,6 @@ fn register_source<T: Evented + 'static>(evented: T, task_waker: LocalWaker, int
     let ret_token = Rc::new(Cell::new(None));
     let ret_token_clone = ret_token.clone();
     EXECUTOR.with(move |executor: &Executor| {
-        let (awake_registration, awake_readiness) = Registration::new2();
         let index = executor.sources.borrow_mut().insert(Source {
             task_waker,
             evented: Box::new(evented),
