@@ -341,6 +341,10 @@ impl TcpStream {
     pub fn write(&mut self, data: Vec<u8>) -> StreamWriteState {
         StreamWriteState { stream: self, data }
     }
+
+    pub fn write_str(&mut self, data: &str) -> StreamWriteState {
+        StreamWriteState { stream: self, data: data.as_bytes().to_vec() }
+    }
 }
 
 impl TcpStream {
