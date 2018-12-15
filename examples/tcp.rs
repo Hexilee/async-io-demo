@@ -1,6 +1,6 @@
 use mio::*;
 use mio::net::{TcpListener, TcpStream};
-use std::io::{Read, Write};
+use std::io::{Read, Write, self};
 use failure::Error;
 use std::time::{Duration, Instant};
 
@@ -66,7 +66,8 @@ fn main() -> Result<(), Error> {
                                     assert_eq!(CLIENT_HELLO, &hello);
                                     println!("server received");
                                 }
-                                _ => continue
+                                Err(ref err) if err.kind() == io::ErrorKind::WouldBlock => continue,
+                                err => err?
                             }
                         }
                     }
@@ -83,7 +84,8 @@ fn main() -> Result<(), Error> {
                                 assert_eq!(SERVER_HELLO, &hello);
                                 println!("client received");
                             }
-                            _ => continue
+                            Err(ref err) if err.kind() == io::ErrorKind::WouldBlock => continue,
+                            err => err?
                         }
                     }
                 }
