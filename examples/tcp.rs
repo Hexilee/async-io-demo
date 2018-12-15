@@ -54,8 +54,15 @@ fn main() -> Result<(), Error> {
                 SERVER => {
                     if event.readiness().is_writable() {
                         if let Some(ref mut handler) = &mut server_handler {
-                            handler.write(SERVER_HELLO)?;
-                            println!("server wrote");
+                            match handler.write(SERVER_HELLO) {
+                                Ok(_) => {
+                                    println!("server wrote");
+                                }
+                                Err(ref err) if err.kind() == io::ErrorKind::WouldBlock => continue,
+                                err => {
+                                    err?;
+                                }
+                            }
                         }
                     }
                     if event.readiness().is_readable() {
@@ -67,15 +74,24 @@ fn main() -> Result<(), Error> {
                                     println!("server received");
                                 }
                                 Err(ref err) if err.kind() == io::ErrorKind::WouldBlock => continue,
-                                err => err?
+                                err => {
+                                    err?;
+                                }
                             }
                         }
                     }
                 }
                 CLIENT => {
                     if event.readiness().is_writable() {
-                        client.write(CLIENT_HELLO)?;
-                        println!("client wrote");
+                        match client.write(CLIENT_HELLO) {
+                            Ok(_) => {
+                                println!("client wrote");
+                            }
+                            Err(ref err) if err.kind() == io::ErrorKind::WouldBlock => continue,
+                            err => {
+                                err?;
+                            }
+                        }
                     }
                     if event.readiness().is_readable() {
                         let mut hello = [0; 4];
@@ -85,7 +101,9 @@ fn main() -> Result<(), Error> {
                                 println!("client received");
                             }
                             Err(ref err) if err.kind() == io::ErrorKind::WouldBlock => continue,
-                            err => err?
+                            err => {
+                                err?;
+                            }
                         }
                     }
                 }
