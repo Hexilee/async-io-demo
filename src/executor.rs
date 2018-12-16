@@ -142,12 +142,10 @@ thread_local! {
     static EXECUTOR: Executor = Executor::new().expect("initializing executor failed!")
 }
 
-pub fn block_on<R, F>(main_task: F) -> R
+pub fn block_on<R, F>(main_task: F) -> Result<R, Error>
     where R: Sized,
           F: Future<Output=R> {
-    let ret = Rc::new(Cell::new(None));
-    let ret_clone = ret.clone();
-    EXECUTOR.with(move |executor: &Executor| {
+    EXECUTOR.with(move |executor: &Executor| -> Result<R, Error> {
         let mut pinned_task = Box::pinned(main_task);
         let mut events = Events::with_capacity(EVENT_CAP);
         let main_waker = executor.main_waker();
@@ -155,14 +153,13 @@ pub fn block_on<R, F>(main_task: F) -> R
         match pinned_task.as_mut().poll(&main_waker) {
             task::Poll::Ready(result) => {
                 debug!("main task complete");
-                ret_clone.set(Some(result));
-                return;
+                return Ok(result);
             }
             task::Poll::Pending => {
                 debug!("main task pending");
                 loop {
                     // executor.poll.poll(&mut events, Some(Duration::from_millis(POLL_TIME_OUT_MILL))).expect("polling failed");
-                    executor.poll.poll(&mut events, None).expect("polling failed");
+                    executor.poll.poll(&mut events, None)?;
                     debug!("events empty: {}", events.is_empty());
                     for event in events.iter() {
                         debug!("get event: {:?}", event.token());
@@ -171,8 +168,7 @@ pub fn block_on<R, F>(main_task: F) -> R
                                 debug!("receive a main task event");
                                 match pinned_task.as_mut().poll(&main_waker) {
                                     task::Poll::Ready(result) => {
-                                        ret_clone.set(Some(result));
-                                        return;
+                                        return Ok(result);
                                     }
                                     task::Poll::Pending => {
                                         debug!("main task pending again");
@@ -197,7 +193,7 @@ pub fn block_on<R, F>(main_task: F) -> R
                                 match task.inner_task.as_mut().poll(&task.waker.gen_local_waker()) {
                                     task::Poll::Ready(_) => {
                                         debug!("task({:?}) complete", token);
-                                        executor.poll.deregister(&task.waker.awake_registration).expect("task deregister failed");
+                                        executor.poll.deregister(&task.waker.awake_registration)?;
                                         tasks.remove(index);
                                     }
                                     task::Poll::Pending => {
@@ -212,8 +208,7 @@ pub fn block_on<R, F>(main_task: F) -> R
                 }
             }
         }
-    });
-    ret.replace(None).unwrap()
+    })
 }
 
 pub fn spawn<F: Future<Output=()> + 'static>(task: F) {

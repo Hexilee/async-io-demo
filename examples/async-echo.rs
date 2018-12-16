@@ -4,9 +4,10 @@
 #[macro_use]
 extern crate log;
 
+use failure::Error;
 use asyncio::executor::{block_on, spawn, TcpListener};
 
-fn main() {
+fn main() -> Result<(), Error> {
     env_logger::init();
     block_on(async {
         let mut listener = TcpListener::bind(&"127.0.0.1:7878".parse().unwrap()).expect("TcpListener bind fail");
