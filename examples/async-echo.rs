@@ -15,12 +15,12 @@ fn main() -> Result<(), Error> {
         while let Ok((mut stream, addr)) = await!(listener.accept()) {
             info!("connection from {}", addr);
             spawn(async move {
-                let client_hello = await!(stream.read()).unwrap();
+                let client_hello = await!(stream.read()).expect("read from stream fail");
                 let read_length = client_hello.len();
-                let write_length = await!(stream.write(client_hello)).unwrap();
+                let write_length = await!(stream.write(client_hello)).expect("write to stream fail");
                 assert_eq!(read_length, write_length);
                 stream.close();
-            });
+            }).expect("spawn stream fail");
         }
     })
 }

@@ -211,7 +211,7 @@ pub fn block_on<R, F>(main_task: F) -> Result<R, Error>
     })
 }
 
-pub fn spawn<F: Future<Output=()> + 'static>(task: F) {
+pub fn spawn<F: Future<Output=()> + 'static>(task: F) -> Result<(), Error> {
     EXECUTOR.with(move |executor: &Executor| {
         let (awake_registration, awake_readiness) = Registration::new2();
         let index = executor.tasks.borrow_mut().insert(Task {
@@ -227,11 +227,12 @@ pub fn spawn<F: Future<Output=()> + 'static>(task: F) {
                 executor.tasks.borrow_mut().remove(index);
             }
             task::Poll::Pending => {
-                executor.poll.register(&task.waker.awake_registration, token, Ready::all(), PollOpt::edge()).expect("task registration failed");
+                executor.poll.register(&task.waker.awake_registration, token, Ready::all(), PollOpt::edge())?;
                 debug!("task({:?}) pending", token);
             }
-        }
-    });
+        };
+        Ok(())
+    })
 }
 
 fn register_source<T: Evented + 'static>(evented: T, task_waker: LocalWaker, interest: Ready) -> Token {
