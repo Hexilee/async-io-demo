@@ -81,8 +81,8 @@ pub struct TcpListener {
 #[derive(Clone)]
 pub struct TcpStream {
     inner: Rc<RefCell<net::TcpStream>>,
-    read_source_token: Option<Token>,
-    write_source_token: Option<Token>,
+    source_token: Option<Token>,
+    readiness: Ready,
 }
 
 pub struct TcpAcceptState<'a> {
@@ -298,16 +298,6 @@ unsafe fn drop_source(token: Token) -> Result<(), Error> {
     })
 }
 
-// panic when token is ord
-// only delete source, does not deregister
-unsafe fn delete_source(token: Token) {
-    EXECUTOR.with(move |executor: &Executor| {
-        let index = index_from_source_token(token);
-        let mut sources = executor.sources.borrow_mut();
-        sources.remove(index);
-    })
-}
-
 impl Evented for TcpListener {
     fn register(
         &self,
@@ -424,8 +414,8 @@ impl TcpStream {
     pub fn new(connected: mio::net::TcpStream) -> TcpStream {
         TcpStream {
             inner: Rc::new(RefCell::new(connected)),
-            read_source_token: None,
-            write_source_token: None,
+            source_token: None,
+            readiness: Ready::empty(),
         }
     }
 
@@ -445,26 +435,34 @@ impl TcpStream {
     }
 
     pub fn close(self) {
-        if let Some(token) = self.read_source_token {
+        if let Some(token) = self.source_token {
             unsafe { drop_source(token).unwrap() };
-        }
-
-        // stream is deregistered, only delete
-        if let Some(token) = self.write_source_token {
-            unsafe { delete_source(token) };
         }
     }
 }
 
 impl TcpStream {
     fn read_poll(&mut self, lw: &LocalWaker) -> task::Poll<Result<Vec<u8>, Error>> {
-        if let None = self.read_source_token {
-            self.read_source_token = Some(
-                match register_source(self.clone(), lw.clone(), Ready::readable()) {
-                    Ok(token) => token,
-                    Err(err) => return task::Poll::Ready(Err(err)),
-                },
-            )
+        match self.source_token {
+            None => {
+                self.readiness = Ready::readable();
+                self.source_token = Some(
+                    match register_source(self.clone(), lw.clone(), self.readiness) {
+                        Ok(token) => token,
+                        Err(err) => return task::Poll::Ready(Err(err)),
+                    },
+                )
+            }
+
+            Some(token) => {
+                if !self.readiness.is_readable() {
+                    self.readiness = self.readiness | Ready::readable();
+                    match unsafe { reregister_source(token, self.readiness) } {
+                        Err(err) => return task::Poll::Ready(Err(err)),
+                        Ok(_) => {}
+                    };
+                }
+            }
         }
         let mut ret = [0u8; 1024];
         let ref_cell: &RefCell<net::TcpStream> = self.inner.borrow();
@@ -482,13 +480,26 @@ impl TcpStream {
     }
 
     fn write_poll(&mut self, data: &[u8], lw: &LocalWaker) -> task::Poll<Result<usize, Error>> {
-        if let None = self.write_source_token {
-            self.write_source_token = Some(
-                match register_source(self.clone(), lw.clone(), Ready::writable()) {
-                    Ok(token) => token,
-                    Err(err) => return task::Poll::Ready(Err(err)),
-                },
-            );
+        match self.source_token {
+            None => {
+                self.readiness = Ready::writable();
+                self.source_token = Some(
+                    match register_source(self.clone(), lw.clone(), self.readiness) {
+                        Ok(token) => token,
+                        Err(err) => return task::Poll::Ready(Err(err)),
+                    },
+                )
+            }
+
+            Some(token) => {
+                if !self.readiness.is_writable() {
+                    self.readiness = self.readiness | Ready::writable();
+                    match unsafe { reregister_source(token, self.readiness) } {
+                        Err(err) => return task::Poll::Ready(Err(err)),
+                        Ok(_) => {}
+                    };
+                }
+            }
         }
         let ref_cell: &RefCell<net::TcpStream> = self.inner.borrow();
         match ref_cell.borrow_mut().write(data) {
