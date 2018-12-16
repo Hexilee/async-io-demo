@@ -235,9 +235,7 @@ pub fn spawn<F: Future<Output=()> + 'static>(task: F) -> Result<(), Error> {
     })
 }
 
-fn register_source<T: Evented + 'static>(evented: T, task_waker: LocalWaker, interest: Ready) -> Token {
-    let ret_token = Rc::new(Cell::new(None));
-    let ret_token_clone = ret_token.clone();
+fn register_source<T: Evented + 'static>(evented: T, task_waker: LocalWaker, interest: Ready) -> Result<Token, Error> {
     EXECUTOR.with(move |executor: &Executor| {
         let index = executor.sources.borrow_mut().insert(Source {
             task_waker,
@@ -246,33 +244,34 @@ fn register_source<T: Evented + 'static>(evented: T, task_waker: LocalWaker, int
         debug!("new sources: Index({})", index);
         let token = get_source_token(index);
         let source = &executor.sources.borrow()[index];
-        executor.poll.register(&source.evented, token, interest, PollOpt::edge()).expect("source registration failed");
+        executor.poll.register(&source.evented, token, interest, PollOpt::edge())?;
         debug!("register source: {:?}", token);
-        ret_token.set(Some(token))
-    });
-    ret_token_clone.get().expect("ret token is None")
+        Ok(token)
+    })
 }
 
 // panic when token is ord
-unsafe fn reregister_source(token: Token, interest: Ready) {
+unsafe fn reregister_source(token: Token, interest: Ready) -> Result<(), Error> {
     EXECUTOR.with(move |executor: &Executor| {
         let index = index_from_source_token(token);
         debug!("reregister source: Index({})", index);
         let source = &executor.sources.borrow()[index];
-        executor.poll.reregister(&source.evented, token, interest, PollOpt::edge()).expect("source reregistration failed");
+        executor.poll.reregister(&source.evented, token, interest, PollOpt::edge())?;
         debug!("source addr: {:p}", source);
-    });
+        Ok(())
+    })
 }
 
 // panic when token is ord
-unsafe fn drop_source(token: Token) {
+unsafe fn drop_source(token: Token) -> Result<(), Error>  {
     EXECUTOR.with(move |executor: &Executor| {
         let index = index_from_source_token(token);
         let mut sources = executor.sources.borrow_mut();
         let source = &sources[index];
-        executor.poll.deregister(&source.evented);
+        executor.poll.deregister(&source.evented)?;
         sources.remove(index);
-    });
+        Ok(())
+    })
 }
 
 impl Evented for TcpListener {
@@ -314,11 +313,14 @@ impl TcpListener {
         TcpListener { inner: Rc::new(listener), accept_source_token: None }
     }
 
-    fn poll_accept(&mut self, lw: &LocalWaker) -> task::Poll<io::Result<(TcpStream, SocketAddr)>> {
+    fn poll_accept(&mut self, lw: &LocalWaker) -> task::Poll<Result<(TcpStream, SocketAddr), Error>> {
         debug!("waker addr: {:p}", lw);
         if let None = self.accept_source_token {
-            self.accept_source_token = Some(register_source(self.clone(), lw.clone(), Ready::readable()));
-        }
+            self.accept_source_token = Some(match register_source(self.clone(), lw.clone(), Ready::readable()) {
+                Ok(token) => token,
+                Err(err) => return task::Poll::Ready(Err(err))
+            })
+        };
         match self.inner.accept() {
             Ok((stream, addr)) => {
                 debug!("accept stream from: {}", addr);
@@ -328,7 +330,7 @@ impl TcpListener {
                 debug!("accept would block");
                 task::Poll::Pending
             }
-            Err(err) => task::Poll::Ready(Err(err))
+            Err(err) => task::Poll::Ready(Err(Error::from(err)))
         }
     }
 
@@ -380,9 +382,12 @@ impl TcpStream {
 }
 
 impl TcpStream {
-    fn read_poll(&mut self, lw: &LocalWaker) -> task::Poll<io::Result<Vec<u8>>> {
+    fn read_poll(&mut self, lw: &LocalWaker) -> task::Poll<Result<Vec<u8>, Error>> {
         if let None = self.read_source_token {
-            self.read_source_token = Some(register_source(self.clone(), lw.clone(), Ready::readable()));
+             self.read_source_token = Some(match register_source(self.clone(), lw.clone(), Ready::readable()) {
+                Ok(token) => token,
+                Err(err) => return task::Poll::Ready(Err(err))
+            })
         }
         let mut ret = [0u8; 1024];
         let ref_cell: &RefCell<net::TcpStream> = self.inner.borrow();
@@ -395,13 +400,16 @@ impl TcpStream {
                 debug!("stream read pending");
                 task::Poll::Pending
             }
-            Err(err) => task::Poll::Ready(Err(err))
+            Err(err) => task::Poll::Ready(Err(Error::from(err)))
         }
     }
 
-    fn write_poll(&mut self, data: &[u8], lw: &LocalWaker) -> task::Poll<io::Result<usize>> {
+    fn write_poll(&mut self, data: &[u8], lw: &LocalWaker) -> task::Poll<Result<usize, Error>> {
         if let None = self.write_source_token {
-            self.write_source_token = Some(register_source(self.clone(), lw.clone(), Ready::writable()));
+            self.write_source_token = Some(match register_source(self.clone(), lw.clone(), Ready::writable()){
+                Ok(token) => token,
+                Err(err) => return task::Poll::Ready(Err(err))
+            });
         }
         let ref_cell: &RefCell<net::TcpStream> = self.inner.borrow();
         match ref_cell.borrow_mut().write(data) {
@@ -409,27 +417,27 @@ impl TcpStream {
             Err(ref err) if err.kind() == io::ErrorKind::WouldBlock => {
                 task::Poll::Pending
             }
-            Err(err) => task::Poll::Ready(Err(err))
+            Err(err) => task::Poll::Ready(Err(Error::from(err)))
         }
     }
 }
 
 impl<'a> Future for TcpAcceptState<'a> {
-    type Output = io::Result<(TcpStream, SocketAddr)>;
+    type Output = Result<(TcpStream, SocketAddr), Error>;
     fn poll(mut self: Pin<&mut Self>, lw: &LocalWaker) -> task::Poll<<Self as Future>::Output> {
         self.listener.poll_accept(lw)
     }
 }
 
 impl<'a> Future for StreamReadState<'a> {
-    type Output = io::Result<Vec<u8>>;
+    type Output = Result<Vec<u8>, Error>;
     fn poll(mut self: Pin<&mut Self>, lw: &LocalWaker) -> task::Poll<<Self as Future>::Output> {
         self.stream.read_poll(lw)
     }
 }
 
 impl<'a> Future for StreamWriteState<'a> {
-    type Output = io::Result<usize>;
+    type Output = Result<usize, Error>;
     fn poll(mut self: Pin<&mut Self>, lw: &LocalWaker) -> task::Poll<<Self as Future>::Output> {
         let data = self.data.clone();
         self.stream.write_poll(data.as_slice(), lw)
