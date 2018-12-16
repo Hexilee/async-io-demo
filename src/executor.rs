@@ -298,6 +298,16 @@ unsafe fn drop_source(token: Token) -> Result<(), Error> {
     })
 }
 
+// panic when token is ord
+// only delete source, does not deregister
+unsafe fn delete_source(token: Token) {
+    EXECUTOR.with(move |executor: &Executor| {
+        let index = index_from_source_token(token);
+        let mut sources = executor.sources.borrow_mut();
+        sources.remove(index);
+    })
+}
+
 impl Evented for TcpListener {
     fn register(
         &self,
@@ -439,9 +449,10 @@ impl TcpStream {
             unsafe { drop_source(token).unwrap() };
         }
 
-        // if let Some(token) = self.write_source_token {
-        //     unsafe { drop_source(token).unwrap() };
-        // }
+        // stream is deregistered, only delete
+        if let Some(token) = self.write_source_token {
+            unsafe { delete_source(token) };
+        }
     }
 }
 
@@ -478,14 +489,12 @@ impl TcpStream {
                     Err(err) => return task::Poll::Ready(Err(err)),
                 },
             );
-            task::Poll::Pending
-        } else {
-            let ref_cell: &RefCell<net::TcpStream> = self.inner.borrow();
-            match ref_cell.borrow_mut().write(data) {
-                Ok(n) => task::Poll::Ready(Ok(n)),
-                Err(ref err) if err.kind() == io::ErrorKind::WouldBlock => task::Poll::Pending,
-                Err(err) => task::Poll::Ready(Err(Error::from(err))),
-            }
+        }
+        let ref_cell: &RefCell<net::TcpStream> = self.inner.borrow();
+        match ref_cell.borrow_mut().write(data) {
+            Ok(n) => task::Poll::Ready(Ok(n)),
+            Err(ref err) if err.kind() == io::ErrorKind::WouldBlock => task::Poll::Pending,
+            Err(err) => task::Poll::Ready(Err(Error::from(err))),
         }
     }
 }
