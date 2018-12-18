@@ -31,7 +31,7 @@ Table of Contents
 
 2018 年接近尾声，`rust` 团队勉强立住了异步 `IO` 的 flag，`async` 成为了关键字，`Pin`, `Future`, `Poll` 和 `await!` 也进入了标准库。不过一直以来实际项目中用不到这套东西，所以也没有主动去了解过。
 
-最近心血来潮想用 `rust` 写点东西，但并找不到比较能看的文档（可能是因为 `rust` 发展太快了，很多都过时了），最后参考[这篇文章](https://cafbit.com/post/tokio_internals/)和 `"new tokio"`( [romio](https://github.com/Hexilee/async-io-demo) ) 写了几个 `demo`，并基于 `mio` 在 `coroutine` 中实现了简陋的异步 `IO`。
+最近心血来潮想用 `rust` 写点东西，但并找不到比较能看的文档（可能是因为 `rust` 发展太快了，很多都过时了），最后参考[这篇文章](https://cafbit.com/post/tokio_internals/)和 `"new tokio"`( [romio](https://github.com/withoutboats/romio) ) 写了几个 `demo`，并基于 `mio` 在 `coroutine` 中实现了简陋的异步 `IO`。
 
 最终效果如下：
 
