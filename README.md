@@ -516,11 +516,11 @@ if event.readiness().is_readable() {
 ```rust
 let (handler, addr) = server.accept()?;
 println!("accept from addr: {}", &addr);
-poll.register(&handler, SERVER_WRITE, Ready::writable(), PollOpt::oneshot())?;
+poll.register(&handler, SERVER, Ready::readable() | Ready::writable(), PollOpt::oneshot())?;
 server_handler = Some(handler);
 ```
 
-这样的话，你只能收到一次 `SERVER_WRITE` 事件，除非你使用 `Poll::reregister` 重新注册 `handler`。
+这样的话，你只能收到一次 `SERVER` 事件，除非你使用 `Poll::reregister` 重新注册 `handler`。
 
 > `Poll::reregister` 可以更改 `PollOpt` 和 `interest`
 

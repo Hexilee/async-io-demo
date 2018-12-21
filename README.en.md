@@ -495,7 +495,8 @@ Then, what's the behavior of `PollOpt::onshot()`? Let's talk about the first que
 ```rust
 let (handler, addr) = server.accept()?;
 println!("accept from addr: {}", &addr);
-poll.register(&handler, SERVER_WRITE, Ready::writable(), PollOpt::oneshot()).unwrap();
+poll.register(&handler, SERVER, Ready::readable() | Ready::writable(), PollOpt::oneshot())?;
 server_handler = Some(handler);
 ```
 
+In this case, you can receive 
