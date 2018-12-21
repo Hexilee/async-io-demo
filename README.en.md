@@ -217,3 +217,285 @@ fn main() {
 ```
 
 We need call `Poll::poll` in each loop, the first parameter `events` is used for store events, we set it   with capacity 1024 here.
+
+```rust
+let mut events = Events::with_capacity(1024);
+```
+
+The type of second parameter `timeout` is `Option<Duration>`, method will return `Ok(usize)` when some events occur or timeout if `Some(duration) = timeout`. 
+
+> The usize in Ok refers to the number of events, this value is deprecated and will be removed in 0.7.0.
+
+Here we deliver `timeout = None` ，so when the method return without error, there must be some events. Let's traverse events:
+
+```rust
+match event.token() {
+      SERVER_ACCEPT => {
+          let (handler, addr) = server.accept()?;
+          println!("accept from addr: {}", &addr);
+          poll.register(&handler, SERVER, Ready::readable() | Ready::writable(), PollOpt::edge())?;
+          server_handler = Some(handler);
+      }
+
+      SERVER => {
+          if event.readiness().is_writable() {
+              if let Some(ref mut handler) = &mut server_handler {
+                  match handler.write(SERVER_HELLO) {
+                      Ok(_) => {
+                          println!("server wrote");
+                      }
+                      Err(ref err) if err.kind() == io::ErrorKind::WouldBlock => continue,
+                      err => {
+                          err?;
+                      }
+                  }
+              }
+          }
+          if event.readiness().is_readable() {
+              let mut hello = [0; 4];
+              if let Some(ref mut handler) = &mut server_handler {
+                  match handler.read_exact(&mut hello) {
+                      Ok(_) => {
+                          assert_eq!(CLIENT_HELLO, &hello);
+                          println!("server received");
+                      }
+                      Err(ref err) if err.kind() == io::ErrorKind::WouldBlock => continue,
+                      err => {
+                          err?;
+                      }
+                  }
+              }
+          }
+      }
+      CLIENT => {
+          if event.readiness().is_writable() {
+              match client.write(CLIENT_HELLO) {
+                  Ok(_) => {
+                      println!("client wrote");
+                  }
+                  Err(ref err) if err.kind() == io::ErrorKind::WouldBlock => continue,
+                  err => {
+                      err?;
+                  }
+              }
+          }
+          if event.readiness().is_readable() {
+              let mut hello = [0; 4];
+              match client.read_exact(&mut hello) {
+                  Ok(_) => {
+                      assert_eq!(SERVER_HELLO, &hello);
+                      println!("client received");
+                  }
+                  Err(ref err) if err.kind() == io::ErrorKind::WouldBlock => continue,
+                  err => {
+                      err?;
+                  }
+              }
+          }
+      }
+      _ => unreachable!(),
+  }
+```
+
+We need match token of each event, these tokens are just those we used to register. For example, we register `server` using token `SERVER_ACCEPT`.
+
+```rust
+const SERVER_ACCEPT: Token = Token(0);
+
+...
+
+// Start listening for incoming connections
+poll.register(&server, SERVER_ACCEPT, Ready::readable(),
+                  PollOpt::edge()).unwrap();
+```
+
+In this case, when we find `event.token() == SERVER_ACCEPT`, we should think it's relevant to `server`, so we try to accept a new `TcpStream` and register it, using token `SERVER`:
+
+```rust
+let (handler, addr) = server.accept()?;
+println!("accept from addr: {}", &addr);
+poll.register(&handler, SERVER, Ready::readable() | Ready::writable(),       PollOpt::edge()).unwrap();
+server_handler = Some(handler);
+```
+
+As the same, if we find `event.token() == SERVER`，we should think it's relevant to `handler`:
+
+```rust
+if event.readiness().is_writable() {
+    if let Some(ref mut handler) = &mut server_handler {
+        match handler.write(SERVER_HELLO) {
+            Ok(_) => {
+                println!("server wrote");
+            }
+            Err(ref err) if err.kind() == io::ErrorKind::WouldBlock => continue,
+            err => {
+                err?;
+            }
+        }
+    }
+}
+if event.readiness().is_readable() {
+    let mut hello = [0; 4];
+    if let Some(ref mut handler) = &mut server_handler {
+        match handler.read_exact(&mut hello) {
+            Ok(_) => {
+                assert_eq!(CLIENT_HELLO, &hello);
+                println!("server received");
+            }
+            Err(ref err) if err.kind() == io::ErrorKind::WouldBlock => continue,
+            err => {
+                err?;
+            }
+        }
+    }
+}
+```
+
+In this case, we shoud response differently to different `event.readiness()`, this is the third parameter of register, which named `interest`. As its name, `interest` means 'something you are interested', its type is `Ready`. `mio` support four kinds of `Ready`, `readable`, `writable`, `error` and `hup`, you can union them.
+
+We register `handler`with `Ready::readable() | Ready::writable()`, so event can be `readable` or `writable` or both, you can see it in control flow: 
+
+using
+
+```rust
+if event.readiness().is_writable() {
+    ...
+}
+
+if event.readiness().is_readable() {
+    ...
+}
+```
+
+instead of
+
+```rust
+if event.readiness().is_writable() {
+    ...
+} else if event.readiness().is_readable() {
+    ...
+}
+```
+
+#### Spurious events
+
+The code for dealing with event `SERVER_ACCEPT` above is:
+
+```rust
+match event.token() {
+     SERVER_ACCEPT => {
+         let (handler, addr) = server.accept()?;
+         println!("accept from addr: {}", &addr);
+         poll.register(&handler, SERVER, Ready::readable() | Ready::writable(), PollOpt::edge()).unwrap();
+         server_handler = Some(handler);
+     }
+```
+
+
+
+The result `server.accept()` returned is `io::Result<(TcpStream, SocketAddr)>`.  If we trust `event` entirely, using `try` is the right choise (if there should be a new `TcpStream` is ready, `server.accept()` returning `Err` is unforeseen and unmanageable).
+
+However, we should think event may be spurious, the possibility depends on OS and custom implement. There may not be a new `TcpStream` is ready, in this case, `server.accept()` will return `WouldBlock Error`. We should regard `WouldBlock Error ` as a friendly warning: "there isn't a new `TcpStream` is ready, please do it later again." So we should ignore it and continue the loop.
+
+Like the code for dealing with event `SERVER`
+
+```rust
+match handler.write(SERVER_HELLO) {
+    Ok(_) => {
+        println!("server wrote");
+    }
+    Err(ref err) if err.kind() == io::ErrorKind::WouldBlock => continue,
+    err => {
+        err?;
+    }
+}
+```
+
+#### Poll Option
+
+Now we can execute:
+
+```bash
+cargo run --example tcp
+```
+
+The terminal print some log:
+
+```bash
+client wrote
+accept from addr: 127.0.0.1:53205
+client wrote
+server wrote
+server received
+...
+```
+
+We can see, in 10 milliseconds (`let timeout = Duration::from_millis(10);`), `server` and `client` did dozens of  writing and reading!
+
+How should we do if we don't need dozens of writing and reading? In a pretty network environment, `client ` and `server` is almost always writable, so `Poll::poll` may return in dozens of microseconds.
+
+In this case, we should change the forth parameter of `register`:
+
+```rust
+poll.register(&server, SERVER_ACCEPT, Ready::readable(),
+                  PollOpt::edge()).unwrap();
+```
+
+The type of `PollOpt::edge()` is `PollOpt`, means poll option. There are three kinds of poll options: `level`, `edge` and `oneshot`, what's the difference of them?
+
+For example, in this code:
+
+```rust
+if event.readiness().is_readable() {
+    let mut hello = [0; 4];
+    match client.read_exact(&mut hello) {
+        Ok(_) => {
+            assert_eq!(SERVER_HELLO, &hello);
+            println!("client received");
+        }
+        Err(ref err) if err.kind() == io::ErrorKind::WouldBlock => continue,
+        err => {
+            err?;
+        }
+    }
+}
+```
+
+
+
+When I receive a readable readiness, I read 4 bytes only. If there are 8 bytes in buffer:
+
+- if I register this `TcpStream` with `PollOpt::level()`, I **MUST** receive a `readable readiness event` in next polling;
+- if I register this `TcpStream` with `PollOpt::edge()`, I **MAY** cannot receive a `readable readiness event` in next polling;
+
+So, we can say that readiness using edge-triggered mode is a `Draining readiness`, once a readiness event is received, the corresponding operation must be performed repeatedly until it returns `WouldBlock`. We should alter code above into:
+
+```rust
+if event.readiness().is_readable() {
+    let mut hello = [0; 4];
+    loop {
+        match client.read_exact(&mut hello) {
+            Ok(_) => {
+                assert_eq!(SERVER_HELLO, &hello);
+                println!("client received");
+            }
+            Err(ref err) if err.kind() == io::ErrorKind::WouldBlock => break,
+            err => {
+                err?;
+            }
+        }
+    }
+}
+```
+
+
+
+Then, what's the behavior of `PollOpt::onshot()`? Let's talk about the first question of this section: if we want `handler` to write only once, how should we do? The answer is: register it using `PollOpt::oneshot()`
+
+```rust
+let (handler, addr) = server.accept()?;
+println!("accept from addr: {}", &addr);
+poll.register(&handler, SERVER_WRITE, Ready::writable(), PollOpt::oneshot()).unwrap();
+server_handler = Some(handler);
+```
+

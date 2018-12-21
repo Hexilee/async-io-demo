@@ -335,9 +335,9 @@ const SERVER_ACCEPT: Token = Token(0);
 这样当 `event.token() == SERVER_ACCEPT` 时，就说明这个事件跟我们注册的 `server` 有关，于是我们试图 `accept` 一个新的连接并把它注册进 `poll`，使用的 `token` 是 `SERVER`。
 
 ```rust
-let (handler, addr) = server.accept().unwrap();
+let (handler, addr) = server.accept()?;
 println!("accept from addr: {}", &addr);
-poll.register(&handler, SERVER, Ready::readable() | Ready::writable(), PollOpt::edge()).unwrap();
+poll.register(&handler, SERVER, Ready::readable() | Ready::writable(), PollOpt::edge())?;
 server_handler = Some(handler);
 ```
 
@@ -409,9 +409,9 @@ if ... {
 ```rust
 match event.token() {
      SERVER_ACCEPT => {
-         let (handler, addr) = server.accept().unwrap();
+         let (handler, addr) = server.accept()?;
          println!("accept from addr: {}", &addr);
-         poll.register(&handler, SERVER, Ready::readable() | Ready::writable(), PollOpt::edge()).unwrap();
+         poll.register(&handler, SERVER, Ready::readable() | Ready::writable(), PollOpt::edge())?;
          server_handler = Some(handler);
      }
 ```
@@ -514,10 +514,9 @@ if event.readiness().is_readable() {
 那么，`oneshot` 又是怎样的行为呢？让我们回到上面的问题，如果我们只想让 `handler` 写一次，怎么办 —— 注册时使用 `PollOpt::oneshot()`，即
 
 ```rust
-let (handler, addr) = server.accept().unwrap();
+let (handler, addr) = server.accept()?;
 println!("accept from addr: {}", &addr);
-poll.register(&handler, SERVER, Ready::readable(), PollOpt::edge()).unwrap();
-poll.register(&handler, SERVER_WRITE, Ready::writable(), PollOpt::oneshot()).unwrap();
+poll.register(&handler, SERVER_WRITE, Ready::writable(), PollOpt::oneshot())?;
 server_handler = Some(handler);
 ```
 
