@@ -21,8 +21,8 @@ fn main() -> Result<(), Error> {
                     async move {
                         await!(stream.write_str("Please enter filename: ")).expect("write to stream fail");
                         let file_name_vec = await!(stream.read()).expect("read from stream fail");
-                        let file_name = String::from_utf8(file_name_vec).unwrap();
-                        debug!("file_name length: {}", file_name.len());
+                        let CRLF: &[char] = &['\r', '\n'];
+                        let file_name = String::from_utf8(file_name_vec).unwrap().trim_matches(CRLF).to_owned();
                         let file_contents = await!(read_to_string(file_name)).expect("read to string from file fail");
                         await!(stream.write_str(&file_contents)).expect("write file contents to stream fail");
                         stream.close();

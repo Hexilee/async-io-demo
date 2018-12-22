@@ -468,7 +468,7 @@ impl TcpStream {
         let ref_cell: &RefCell<net::TcpStream> = self.inner.borrow();
         match ref_cell.borrow_mut().read(&mut ret) {
             Ok(n) => {
-                debug!("stream read complete");
+                debug!("stream read {} bytes", n);
                 task::Poll::Ready(Ok(ret[..n].to_vec()))
             }
             Err(ref err) if err.kind() == io::ErrorKind::WouldBlock => {
