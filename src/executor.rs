@@ -251,7 +251,7 @@ pub fn spawn<F: Future<Output = ()> + 'static>(task: F) -> Result<(), Error> {
     })
 }
 
-fn register_source<T: Evented + 'static>(
+pub fn register_source<T: Evented + 'static>(
     evented: T,
     task_waker: LocalWaker,
     interest: Ready,
