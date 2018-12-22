@@ -2,7 +2,7 @@
 
 2019 is approaching. The rust team keeps their promise about asynchronous IO: `async` is introduced as keywords, `Pin, Future, Poll` and `await!` is introduced into standard library. 
 
-I have never used rust for asynchronous IO programming before so almost know nothing about it. However, I would use it for a project recently but couldn't find many documents that are remarkably helpful for newbie of rust asynchronous programming.
+I have never used rust for asynchronous IO programming before, so I almost know nothing about it. However, I would use it for a project recently but couldn't find many documents that are remarkably helpful for newbie of rust asynchronous programming.
 
 Eventually, I wrote several demo and implemented simple asynchronous IO based on `mio` and `coroutine` with the help of both of this blog ([Tokio internals: Understanding Rust's asynchronous I/O framework from the bottom up](https://cafbit.com/post/tokio_internals/)) and source code of "new tokio" [romio](https://github.com/withoutboats/romio) .
 
@@ -54,7 +54,7 @@ Most of the code appearing in this blog is collected in this [repo](https://gith
 
 
 
-### mio: the footstone of asynchronous IO
+### mio: The Footstone of Asynchronous IO
 
 `mio` is a tidy, low-level asynchronous IO library. Nowadays, almost all asynchronous IO libraries in rust ecosystem are based on `mio`.
 
@@ -78,7 +78,7 @@ The first core function corresponded to API in different OS respectively are:
 
 
 
-#### asynchronous network IO
+#### Asynchronous Network IO
 
 This is a demo of asynchronous tcp IO:
 
@@ -377,7 +377,7 @@ if event.readiness().is_writable() {
 }
 ```
 
-#### Spurious events
+#### Spurious Events
 
 The code for dealing with event `SERVER_ACCEPT` above is:
 
@@ -499,4 +499,395 @@ poll.register(&handler, SERVER, Ready::readable() | Ready::writable(), PollOpt::
 server_handler = Some(handler);
 ```
 
-In this case, you can receive 
+In this case, you can only receive event `SERVER` once, unless you re-register `handler` using `Poll::reregister`.
+
+> `Poll::reregister` can using different `PollOpt` and `interest` from the last registering
+
+
+
+#### Still Block
+
+There is still a problem in the code above: we using blocking IO macro `println!`. We should avoid using blocking IO in the code for dealing events.
+
+Given that FS(file-system) IO(including `stdin, stdout, stderr`) is slow, we can send all FS-IO task to a worker thread.
+
+```rust
+use std::sync::mpsc::{Sender, Receiver, channel, SendError};
+
+#[derive(Clone)]
+pub struct Fs {
+    task_sender: Sender<Task>,
+}
+
+impl Fs {
+    pub fn new() -> Self {
+        let (sender, receiver) = channel();
+        std::thread::spawn(move || {
+            loop {
+                match receiver.recv() {
+                    Ok(task) => {
+                        match task {
+                            Task::Println(ref string) => println!("{}", string),
+                            Task::Exit => return
+                        }
+                    },
+                    Err(_) => {
+                        return;
+                    }
+                }
+            }
+        });
+        Fs { task_sender: sender }
+    }
+
+    pub fn println(&self, string: String) {
+        self.task_sender.send(Task::Println(string)).unwrap()
+    }
+}
+
+pub enum Task {
+    Exit,
+    Println(String),
+}
+```
+
+Now, we can replace all `println!` with `Fs::println`.
+
+#### Custom Event 
+
+Implementing non-blocking `println` is easy, because this function has no return. How should we do if we want other non-blocking FS-IO functions? For example, opening a file, then reading it to string, then printing the string, how should we do?
+
+The easiest way is using callback, like this:
+
+```rust
+// src/fs.rs
+
+use crossbeam_channel::{unbounded, Sender};
+use std::fs::File;
+use std::io::Read;
+use std::boxed::FnBox;
+use std::thread;
+use failure::Error;
+
+#[derive(Clone)]
+pub struct Fs {
+    task_sender: Sender<Task>,
+}
+
+pub struct FsHandler {
+    io_worker: thread::JoinHandle<Result<(), Error>>,
+    executor: thread::JoinHandle<Result<(), Error>>,
+}
+
+pub fn fs_async() -> (Fs, FsHandler) {
+    let (task_sender, task_receiver) = unbounded();
+    let (result_sender, result_receiver) = unbounded();
+    let io_worker = std::thread::spawn(move || {
+        loop {
+            match task_receiver.recv() {
+                Ok(task) => {
+                    match task {
+                        Task::Println(ref string) => println!("{}", string),
+                        Task::Open(path, callback, fs) => {
+                            result_sender
+                                .send(TaskResult::Open(File::open(path)?, callback, fs))?
+                        }
+                        Task::ReadToString(mut file, callback, fs) => {
+                            let mut value = String::new();
+                            file.read_to_string(&mut value)?;
+                            result_sender
+                                .send(TaskResult::ReadToString(value, callback, fs))?
+                        }
+                        Task::Exit => {
+                            result_sender
+                                .send(TaskResult::Exit)?;
+                            break;
+                        }
+                    }
+                }
+                Err(_) => {
+                    break;
+                }
+            }
+        }
+        Ok(())
+    });
+    let executor = std::thread::spawn(move || {
+        loop {
+            let result = result_receiver.recv()?;
+            match result {
+                TaskResult::ReadToString(value, callback, fs) => callback.call_box((value, fs))?,
+                TaskResult::Open(file, callback, fs) => callback.call_box((file, fs))?,
+                TaskResult::Exit => break
+            };
+        };
+        Ok(())
+    });
+
+    (Fs { task_sender }, FsHandler { io_worker, executor })
+}
+
+impl Fs {
+    pub fn println(&self, string: String) -> Result<(), Error> {
+        Ok(self.task_sender.send(Task::Println(string))?)
+    }
+
+    pub fn open<F>(&self, path: &str, callback: F) -> Result<(), Error>
+        where F: FnOnce(File, Fs) -> Result<(), Error> + Sync + Send + 'static {
+        Ok(self.task_sender.send(Task::Open(path.to_string(), Box::new(callback), self.clone()))?)
+    }
+
+    pub fn read_to_string<F>(&self, file: File, callback: F) -> Result<(), Error>
+        where F: FnOnce(String, Fs) -> Result<(), Error> + Sync + Send + 'static {
+        Ok(self.task_sender.send(Task::ReadToString(file, Box::new(callback), self.clone()))?)
+    }
+
+    pub fn close(&self) -> Result<(), Error> {
+        Ok(self.task_sender.send(Task::Exit)?)
+    }
+}
+
+impl FsHandler {
+    pub fn join(self) -> Result<(), Error> {
+        self.io_worker.join().unwrap()?;
+        self.executor.join().unwrap()
+    }
+}
+
+type FileCallback = Box<FnBox(File, Fs) -> Result<(), Error> + Sync + Send>;
+type StringCallback = Box<FnBox(String, Fs) -> Result<(), Error> + Sync + Send>;
+
+pub enum Task {
+    Exit,
+    Println(String),
+    Open(String, FileCallback, Fs),
+    ReadToString(File, StringCallback, Fs),
+}
+
+pub enum TaskResult {
+    Exit,
+    Open(File, FileCallback, Fs),
+    ReadToString(String, StringCallback, Fs),
+}
+
+```
+
+
+
+```rust
+// examples/fs.rs
+
+use asyncio::fs::fs_async;
+use failure::Error;
+
+const TEST_FILE_VALUE: &str = "Hello, World!";
+
+fn main() -> Result<(), Error> {
+    let (fs, fs_handler) = fs_async();
+    fs.open("./examples/test.txt", |file, fs| {
+        fs.read_to_string(file, |value, fs| {
+            assert_eq!(TEST_FILE_VALUE, &value);
+            fs.println(value)?;
+            fs.close()
+        })
+    })?;
+    fs_handler.join()?;
+    Ok(())
+}
+```
+
+running this example:
+
+```bash
+cargo run --example fs
+```
+
+This implementation work well, but the executor thread is still blocked by the io-worker thread `(result_receiver.recv()`). Can we run a polling loop in executor thread to not be blocked by IO? (executor should execute `(result_receiver.recv()` only when there are some results in result channel).
+
+To implement a non-blocking executor, we can use custom events supported by `mio`.
+
+Altering the code above:
+
+```rust
+// src/fs_mio.rs
+
+use crossbeam_channel::{unbounded, Sender, TryRecvError};
+use std::fs::File;
+use std::io::{Read};
+use std::boxed::FnBox;
+use std::thread;
+use failure::Error;
+use std::time::Duration;
+use mio::*;
+
+#[derive(Clone)]
+pub struct Fs {
+    task_sender: Sender<Task>,
+}
+
+pub struct FsHandler {
+    io_worker: thread::JoinHandle<Result<(), Error>>,
+    executor: thread::JoinHandle<Result<(), Error>>,
+}
+
+const FS_TOKEN: Token = Token(0);
+
+pub fn fs_async() -> (Fs, FsHandler) {
+    let (task_sender, task_receiver) = unbounded();
+    let (result_sender, result_receiver) = unbounded();
+    let poll = Poll::new().unwrap();
+    let (registration, set_readiness) = Registration::new2();
+    poll.register(&registration, FS_TOKEN, Ready::readable(), PollOpt::oneshot()).unwrap();
+    let io_worker = std::thread::spawn(move || {
+        loop {
+            match task_receiver.recv() {
+                Ok(task) => {
+                    match task {
+                        Task::Println(ref string) => println!("{}", string),
+                        Task::Open(path, callback, fs) => {
+                            result_sender
+                                .send(TaskResult::Open(File::open(path)?, callback, fs))?;
+                            set_readiness.set_readiness(Ready::readable())?;
+                        }
+                        Task::ReadToString(mut file, callback, fs) => {
+                            let mut value = String::new();
+                            file.read_to_string(&mut value)?;
+                            result_sender
+                                .send(TaskResult::ReadToString(value, callback, fs))?;
+                            set_readiness.set_readiness(Ready::readable())?;
+                        }
+                        Task::Exit => {
+                            result_sender
+                                .send(TaskResult::Exit)?;
+                            set_readiness.set_readiness(Ready::readable())?;
+                            break;
+                        }
+                    }
+                }
+                Err(_) => {
+                    break;
+                }
+            }
+        }
+        Ok(())
+    });
+
+    let executor = thread::spawn(move || {
+        let mut events = Events::with_capacity(1024);
+        'outer: loop {
+            poll.poll(&mut events, Some(Duration::from_secs(1)))?;
+            for event in events.iter() {
+                match event.token() {
+                    FS_TOKEN => {
+                        loop {
+                            match result_receiver.try_recv() {
+                                Ok(result) => {
+                                    match result {
+                                        TaskResult::ReadToString(value, callback, fs) => callback.call_box((value, fs))?,
+                                        TaskResult::Open(file, callback, fs) => callback.call_box((file, fs))?,
+                                        TaskResult::Exit => break 'outer
+                                    }
+                                }
+                                Err(e) => {
+                                    match e {
+                                        TryRecvError::Empty => break,
+                                        TryRecvError::Disconnected => Err(e)?
+                                    }
+                                }
+                            }
+                        }
+                        poll.reregister(&registration, FS_TOKEN, Ready::readable(), PollOpt::oneshot())?;
+                    }
+                    _ => unreachable!()
+                }
+            }
+        };
+        Ok(())
+    });
+    (Fs { task_sender }, FsHandler { io_worker, executor })
+}
+
+impl Fs {
+    pub fn println(&self, string: String) -> Result<(), Error> {
+        Ok(self.task_sender.send(Task::Println(string))?)
+    }
+
+    pub fn open<F>(&self, path: &str, callback: F) -> Result<(), Error>
+        where F: FnOnce(File, Fs) -> Result<(), Error> + Sync + Send + 'static {
+        Ok(self.task_sender.send(Task::Open(path.to_string(), Box::new(callback), self.clone()))?)
+    }
+
+    pub fn read_to_string<F>(&self, file: File, callback: F) -> Result<(), Error>
+        where F: FnOnce(String, Fs) -> Result<(), Error> + Sync + Send + 'static {
+        Ok(self.task_sender.send(Task::ReadToString(file, Box::new(callback), self.clone()))?)
+    }
+
+    pub fn close(&self) -> Result<(), Error> {
+        Ok(self.task_sender.send(Task::Exit)?)
+    }
+}
+
+impl FsHandler {
+    pub fn join(self) -> Result<(), Error> {
+        self.io_worker.join().unwrap()?;
+        self.executor.join().unwrap()
+    }
+}
+
+type FileCallback = Box<FnBox(File, Fs) -> Result<(), Error> + Sync + Send>;
+type StringCallback = Box<FnBox(String, Fs) -> Result<(), Error> + Sync + Send>;
+
+pub enum Task {
+    Exit,
+    Println(String),
+    Open(String, FileCallback, Fs),
+    ReadToString(File, StringCallback, Fs),
+}
+
+pub enum TaskResult {
+    Exit,
+    Open(File, FileCallback, Fs),
+    ReadToString(String, StringCallback, Fs),
+}
+
+
+// examples/fs-mio.rs
+
+use asyncio::fs_mio::fs_async;
+use failure::Error;
+
+const TEST_FILE_VALUE: &str = "Hello, World!";
+
+fn main() -> Result<(), Error> {
+    let (fs, fs_handler) = fs_async();
+    fs.open("./examples/test.txt", |file, fs| {
+        fs.read_to_string(file, |value, fs| {
+            assert_eq!(TEST_FILE_VALUE, &value);
+            fs.println(value)?;
+            fs.close()
+        })
+    })?;
+    fs_handler.join()?;
+    Ok(())
+}
+
+```
+
+
+
+running this example:
+
+```bash
+cargo run --example fs-mio
+```
+
+
+
+We can see the difference between two implementations. On the one hand, executor will never be blocking by `result_receiver.recv()`, instead, it will wait for `Poll::poll` returning; on the other hand, io worker thread will execute `set_readiness.set_readiness(Ready::readable())?` after executing `result_sender.send`, to inform executor there are some events happens.
+
+In this case, executor will never be blocked by io worker, because we can register all events in executor, and `mio::Poll` will listen to all events (eg, combine  example `fs-mio` with example `tcp`).
+
+
+
+#### Callback is Evil
+
