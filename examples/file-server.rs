@@ -20,8 +20,10 @@ fn main() -> Result<(), Error> {
                 spawn(
                     async move {
                         await!(stream.write_str("Please enter filename: ")).expect("write to stream fail");
-                        let file_name = await!(stream.read()).expect("read from stream fail");
-                        let file_contents = await!(read_to_string(String::from_utf8(file_name).unwrap())).expect("read to string from file fail");
+                        let file_name_vec = await!(stream.read()).expect("read from stream fail");
+                        let file_name = String::from_utf8(file_name_vec).unwrap();
+                        debug!("file_name length: {}", file_name.len());
+                        let file_contents = await!(read_to_string(file_name)).expect("read to string from file fail");
                         await!(stream.write_str(&file_contents)).expect("write file contents to stream fail");
                         stream.close();
                     },

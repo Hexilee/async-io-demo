@@ -2,12 +2,13 @@ use failure::Error;
 use crossbeam_channel::{bounded, unbounded, Receiver, Sender, TryRecvError};
 use mio::{Ready, Registration, SetReadiness, Token};
 use crate::executor::{register_source};
-use std::fs;
+use std::fs::{File};
 use std::future::Future;
-use std::io;
+use std::io::{self, Read};
 use std::pin::Pin;
 use std::task::{self, LocalWaker};
 use std::thread;
+use log::debug;
 
 struct BlockTaskWorker {
     task_sender: Sender<Box<dyn BlockTask>>
@@ -70,9 +71,14 @@ struct ReadFileState {
 
 impl BlockTask for ReadFileTask {
     fn exec(&mut self) {
+        debug!("ready to open file: {}", self.file_name.as_str());
+        let mut file = File::open(self.file_name.trim_matches('\n')).expect("open file error");
+        let mut ret = String::new();
+        file.read_to_string(&mut ret).expect("read file error");
         self.string_sender
-            .send(fs::read_to_string(self.file_name.clone()))
+            .send(Ok(ret))
             .unwrap();
+        debug!("sent file named {}", &self.file_name);
         self.set_readiness.set_readiness(Ready::readable()).unwrap();
     }
 }
@@ -99,12 +105,24 @@ impl Future for ReadFileState {
         match self.string_receiver.try_recv() {
             Ok(read_result) => {
                 match read_result {
-                    Ok(value) => task::Poll::Ready(Ok(value)),
-                    Err(err) => task::Poll::Ready(Err(Error::from(err)))
+                    Ok(value) => {
+                        debug!("read value {}", &value);
+                        task::Poll::Ready(Ok(value))
+                    }
+                    Err(err) => {
+                        debug!("read err {}", &err);
+                        task::Poll::Ready(Err(Error::from(err)))
+                    }
                 }
             }
-            Err(TryRecvError::Empty) => task::Poll::Pending,
-            Err(err) => task::Poll::Ready(Err(Error::from(err)))
+            Err(TryRecvError::Empty) => {
+                debug!("read file pending");
+                task::Poll::Pending
+            }
+            Err(err) => {
+                debug!("read file disconnecting");
+                task::Poll::Ready(Err(Error::from(err)))
+            }
         }
     }
 }
