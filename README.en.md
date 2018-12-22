@@ -6,10 +6,10 @@ I have never used rust for asynchronous IO programming before, so I almost know 
 
 Eventually, I wrote several demo and implemented simple asynchronous IO based on `mio` and `coroutine` with the help of both of this blog ([Tokio internals: Understanding Rust's asynchronous I/O framework from the bottom up](https://cafbit.com/post/tokio_internals/)) and source code of "new tokio" [romio](https://github.com/withoutboats/romio) .
 
-This is the final asynchronous coroutine:
+This is the final file server:
 
 ```rust
-// examples/async-echo.rs
+// examples/file-server.rs
 
 #![feature(async_await)]
 #![feature(await_macro)]
@@ -18,6 +18,7 @@ This is the final asynchronous coroutine:
 extern crate log;
 
 use asyncio::executor::{block_on, spawn, TcpListener};
+use asyncio::fs_future::{read_to_string};
 use failure::Error;
 
 fn main() -> Result<(), Error> {
@@ -31,11 +32,12 @@ fn main() -> Result<(), Error> {
                 info!("connection from {}", addr);
                 spawn(
                     async move {
-                        let client_hello = await!(stream.read()).expect("read from stream fail");
-                        let read_length = client_hello.len();
-                        let write_length =
-                            await!(stream.write(client_hello)).expect("write to stream fail");
-                        assert_eq!(read_length, write_length);
+                        await!(stream.write_str("Please enter filename: ")).expect("write to stream fail");
+                        let file_name_vec = await!(stream.read()).expect("read from stream fail");
+                        let CRLF: &[char] = &['\r', '\n'];
+                        let file_name = String::from_utf8(file_name_vec).unwrap().trim_matches(CRLF).to_owned();
+                        let file_contents = await!(read_to_string(file_name)).expect("read to string from file fail");
+                        await!(stream.write_str(&file_contents)).expect("write file contents to stream fail");
                         stream.close();
                     },
                 )
@@ -885,9 +887,50 @@ cargo run --example fs-mio
 
 We can see the difference between two implementations. On the one hand, executor will never be blocking by `result_receiver.recv()`, instead, it will wait for `Poll::poll` returning; on the other hand, io worker thread will execute `set_readiness.set_readiness(Ready::readable())?` after executing `result_sender.send`, to inform executor there are some events happens.
 
-In this case, executor will never be blocked by io worker, because we can register all events in executor, and `mio::Poll` will listen to all events (eg, combine  example `fs-mio` with example `tcp`).
+In this case, executor will never be blocked by io worker, because we can register all events in executor, and `mio::Poll` will listen to all events (eg, combine `fs-mio` with `tcp` into a file server).
 
 
 
 #### Callback is Evil
 
+Before writing a file server, we should talk about the problems of callback.
+
+Callback can make code confusing, you can realize it more clearly when handling error, like this:
+
+```rust
+use asyncio::fs_mio::fs_async;
+use failure::Error;
+
+const TEST_FILE_VALUE: &str = "Hello, World!";
+
+fn main() -> Result<(), Error> {
+    let (fs, fs_handler) = fs_async();
+    fs.open("./examples/test.txt", 
+        |file, fs| {
+            fs.read_to_string(file, 
+                |value, fs| {
+                    assert_eq!(TEST_FILE_VALUE, &value);
+                    fs.println(value, 
+                        |err| {
+                            ...
+                        }
+                    );
+                    fs.close()
+                },
+                |err| {
+                    ...
+                }
+            )
+        },
+        |err| {
+            ...
+        }
+    )?;
+    fs_handler.join()?;
+    Ok(())
+}
+```
+
+
+
+Moreover, there is another problem in rust when we 
