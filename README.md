@@ -17,12 +17,13 @@ Table of Contents
         * [Poll&lt;T&gt;](#pollt)
         * [await!](#await)
         * [async](#async)
-    * [asynchronous coroutine](#asynchronous-coroutine)
+    * [non-blocking coroutine](#non-blocking-coroutine)
         * [Executor](#executor)
         * [block_on](#block_on)
         * [spawn](#spawn)
         * [TcpListener](#tcplistener)
         * [TcpStream](#tcpstream)
+        * [echo-server](#echo-server)
 * [后记](#后记)
 
 
@@ -33,45 +34,48 @@ Table of Contents
 
 最近心血来潮想用 `rust` 写点东西，但并找不到比较能看的文档（可能是因为 `rust` 发展太快了，很多都过时了），最后参考[这篇文章](https://cafbit.com/post/tokio_internals/)和 `"new tokio"`( [romio](https://github.com/withoutboats/romio) ) 写了几个 `demo`，并基于 `mio` 在 `coroutine` 中实现了简陋的异步 `IO`。
 
-最终效果如下：
+最终实现的 file-server 如下：
 
 ```rust
 // examples/async-echo.rs
 
 #![feature(async_await)]
 #![feature(await_macro)]
+#![feature(futures_api)]
 
 #[macro_use]
 extern crate log;
 
-use asyncio::executor::{block_on, spawn, TcpListener};
+use asyncio::executor::{block_on, spawn, TcpListener, TcpStream};
+use asyncio::fs_future::{read_to_string};
 use failure::Error;
 
 fn main() -> Result<(), Error> {
     env_logger::init();
-    block_on(
-        async {
-            let mut listener = TcpListener::bind(&"127.0.0.1:7878".parse().unwrap())
-                .expect("TcpListener bind fail");
-            info!("Listening on 127.0.0.1:7878");
-            while let Ok((mut stream, addr)) = await!(listener.accept()) {
-                info!("connection from {}", addr);
-                spawn(
-                    async move {
-                        let client_hello = await!(stream.read()).expect("read from stream fail");
-                        let read_length = client_hello.len();
-                        let write_length =
-                            await!(stream.write(client_hello)).expect("write to stream fail");
-                        assert_eq!(read_length, write_length);
-                        stream.close();
-                    },
-                )
-                .expect("spawn stream fail");
-            }
-        },
-    )
+    block_on(new_server())?
 }
 
+const CRLF: &[char] = &['\r', '\n'];
+
+async fn new_server() -> Result<(), Error> {
+    let mut listener = TcpListener::bind(&"127.0.0.1:7878".parse()?)?;
+    info!("Listening on 127.0.0.1:7878");
+    while let Ok((stream, addr)) = await!(listener.accept()) {
+        info!("connection from {}", addr);
+        spawn(handle_stream(stream))?;
+    }
+    Ok(())
+}
+
+async fn handle_stream(mut stream: TcpStream) -> Result<(), Error> {
+    await!(stream.write_str("Please enter filename: "))?;
+    let file_name_vec = await!(stream.read())?;
+    let file_name = String::from_utf8(file_name_vec)?.trim_matches(CRLF).to_owned();
+    let file_contents = await!(read_to_string(file_name))?;
+    await!(stream.write_str(&file_contents))?;
+    stream.close();
+    Ok(())
+}
 ```
 
 写这篇文章的主要目的是梳理和总结，同时也希望能给对这方面有兴趣的 `Rustacean` 作为参考。本文代码以易于理解为主要编码原则，某些地方并没有太考虑性能，还请见谅；但如果文章和代码中有明显错误，欢迎指正。
@@ -1371,11 +1375,11 @@ fn async_recv(string_channel: Receiver<String>) -> impl Future<Output = T::Retur
 }
 ```
 
-#### asynchronous coroutine
+#### non-blocking coroutine
 
 掌握了上文的基础知识后，我们就可以开始实践了。
 
-coroutine 本身并不意味着“异步”，你完全可以在两次 `yield` 之间调用同步 `IO` 的 `API` 从而导致 `IO` 阻塞。 异步的关键在于，在将要阻塞的时候（比如某个 `API` 返回了 `io::ErrorKind::WouldBlock`），`GenFuture::poll`中 用底层异步接口注册一个事件和唤醒回调（`waker`）然后自身休眠（`yield`），底层异步调度在特定事件发生的时候回调唤醒这个 `Future`。
+coroutine 本身并不意味着“非阻塞”，你完全可以在两次 `yield` 之间调用阻塞 `IO` 的 `API` 从而导致阻塞。 非阻塞的关键在于，在将要阻塞的时候（比如某个 `API` 返回了 `io::ErrorKind::WouldBlock`），在 `GenFuture::poll` 中用底层异步接口注册一个事件和唤醒回调（`waker`）然后自身休眠（`yield`），底层异步调度在特定事件发生的时候回调唤醒这个 `Future`。
 
 下面我参照 `romio` 的异步调度实现了 `Executor` `block_on, spawn, TcpListener` 和 `TcpStream`，代码较长，建议 `clone` 后用编辑器看。（请注意区分 `Poll(mio::Poll)` 与 `task::Poll` 以及 `net::{TcpListener, TcpStream}(mio::net::{TcpListener, TcpStream})` 与 `TcpListener, TcpStream`）
 
@@ -1415,20 +1419,79 @@ coroutine 本身并不意味着“异步”，你完全可以在两次 `yield` �
 
 包装了 `mio::net::TcpStream`, `read`和 `write` 方法均返回 `Future`。
 
+##### echo-server
 
+实现了 `executor` 之后，我们可以就写一个简单的 `echo-server` 了
 
-### 后记
+```rust
+// examples/async-echo
 
-实现了 `executor` 之后，我们就可以运行文章开头给的 `example`	 了，
+#![feature(async_await)]
+#![feature(await_macro)]
+
+#[macro_use]
+extern crate log;
+
+use asyncio::executor::{block_on, spawn, TcpListener};
+use failure::Error;
+
+fn main() -> Result<(), Error> {
+    env_logger::init();
+    block_on(
+        async {
+            let mut listener = TcpListener::bind(&"127.0.0.1:7878".parse()?)?;
+            info!("Listening on 127.0.0.1:7878");
+            while let Ok((mut stream, addr)) = await!(listener.accept()) {
+                info!("connection from {}", addr);
+                spawn(
+                    async move {
+                        let client_hello = await!(stream.read())?;
+                        let read_length = client_hello.len();
+                        let write_length =
+                            await!(stream.write(client_hello))?;
+                        assert_eq!(read_length, write_length);
+                        stream.close();
+                        Ok(())
+                    },
+                )?;
+            };
+            Ok(())
+        },
+    )?
+}
+
+```
 
 ```bash
 RUST_LOG=info cargo run --example async-echo
 ```
 
-可以用 `telnet` 连连试试看。
+可以用 `telnet` 连上试试看。
 
-当然最后还留了一个问题，就是把文件 `IO` 也封装为 `coroutine` 的异步 `IO`，当然我还没有写，读者有兴趣可以试着实现一下，我们接下来再谈谈现在 `coroutine API` 的不足。
+### 后记
 
-我目前发现的主要问题就是不能在 `Future::poll` 或者 `async` 中使用 `try`，导致出现 `Result` 的地方只能 `match`，希望之后会有比较好的解决方案。
+当然最后还留了一个 demo，就是把文件 `IO` 也封装为 `coroutine` 的非阻塞 `IO`，实现在 `src/fs_future.rs` 中，这时可以运行本文开头给的 example 了。
+
+```bash
+RUST_LOG=info cargo run --example file-server
+```
+
+用 `telnet` 测试
+
+```bash
+[~] telnet 127.0.0.1 7878                                                                  
+Trying 127.0.0.1...
+Connected to localhost.
+Escape character is '^]'.
+Please enter filename: examples/test.txt
+Hello, World!
+Connection closed by foreign host.
+```
+
+
+
+读者有兴趣的话可以看一下`src/fs_future.rs`中的实现，这里就不细讲了，接下来我们再谈谈现在 `coroutine API` 的不足。
+
+我目前发现的主要问题就是不能在 `Future::poll` 中使用 `try`，导致出现 `Result` 的地方只能 `match`，希望之后会有比较好的解决方案（比如给 `task::Poll<Result<R, E>>` 实现 `Try`）。
 
 第二个问题是 `Waker` 最里面装的是 `UnsafeWaker`的 `NonNull` 指针，当然我能理解 `rust` 团队有性能等其它方面的考虑，但如果用 `mio` 的 `set_readiness` 封装出 `MyWaker` 的话，`clone` 完全不需要 `NonNull`，而且我在实际编码时因为这个出过空指针错误。。希望以后能提供一个更安全的选择。
