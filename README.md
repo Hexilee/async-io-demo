@@ -1490,7 +1490,7 @@ Connection closed by foreign host.
 
 
 
-读者有兴趣的话可以看一下`src/fs_future.rs`中的实现，这里就不细讲了，接下来我们再谈谈现在 `coroutine API` 的不足。
+读者有兴趣的话可以看一下 [src/fs_future.rs](https://github.com/Hexilee/async-io-demo/blob/master/src/fs_future.rs) 中的实现，这里就不细说，接下来我们再谈谈现在 `coroutine API` 的不足。
 
 我目前发现的主要问题就是不能在 `Future::poll` 中使用 `try`，导致出现 `Result` 的地方只能 `match`，希望之后会有比较好的解决方案（比如给 `task::Poll<Result<R, E>>` 实现 `Try`）。
 
