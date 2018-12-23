@@ -69,7 +69,7 @@ struct Source {
 
 struct Task {
     waker: InnerWaker,
-    inner_task: PinFuture<()>,
+    inner_task: PinFuture<Result<(), Error>>,
 }
 
 #[derive(Clone)]
@@ -199,10 +199,11 @@ where
                                 let mut tasks = executor.tasks.borrow_mut();
                                 let task = &mut tasks[index];
                                 match task.inner_task.as_mut().poll(&task.waker.gen_local_waker()) {
-                                    task::Poll::Ready(_) => {
+                                    task::Poll::Ready(result) => {
                                         debug!("task({:?}) complete", token);
                                         executor.poll.deregister(&task.waker.awake_registration)?;
                                         tasks.remove(index);
+                                        result?;
                                     }
                                     task::Poll::Pending => {
                                         debug!("task({:?}) pending", token);
@@ -219,7 +220,7 @@ where
     })
 }
 
-pub fn spawn<F: Future<Output = ()> + 'static>(task: F) -> Result<(), Error> {
+pub fn spawn<F: Future<Output = Result<(), Error>> + 'static>(task: F) -> Result<(), Error> {
     EXECUTOR.with(move |executor: &Executor| {
         let (awake_registration, awake_readiness) = Registration::new2();
         let index = executor.tasks.borrow_mut().insert(Task {

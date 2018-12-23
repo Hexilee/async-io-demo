@@ -11,8 +11,7 @@ use failure::Error;
 
 fn main() -> Result<(), Error> {
     env_logger::init();
-    block_on(new_server())?;
-    Ok(())
+    block_on(new_server())?
 }
 
 
@@ -21,7 +20,7 @@ const CRLF: &[char] = &['\r', '\n'];
 async fn new_server() -> Result<(), Error> {
     let mut listener = TcpListener::bind(&"127.0.0.1:7878".parse()?)?;
     info!("Listening on 127.0.0.1:7878");
-    while let Ok((mut stream, addr)) = await!(listener.accept()) {
+    while let Ok((stream, addr)) = await!(listener.accept()) {
         info!("connection from {}", addr);
         spawn(handle_stream(stream))?;
     }
