@@ -1,3 +1,33 @@
+Table of Contents
+=================
+
+* [Introduction](#introduction)
+* [mio: The Footstone of Asynchronous IO](#mio-the-footstone-of-asynchronous-io)
+  * [Asynchronous Network IO](#asynchronous-network-io)
+      * [Spurious Events](#spurious-events)
+      * [Poll Option](#poll-option)
+      * [Still Block](#still-block)
+      * [Custom Event](#custom-event)
+      * [Callback is Evil](#callback-is-evil)
+* [coroutine](#coroutine)
+      * [generator](#generator)
+      * [self-referential structs](#self-referential-structs)
+              	* [Pin](#pin)
+      * [Reasonable Abstraction](#reasonable-abstraction)
+          * [Poll&lt;T&gt;](#pollt)
+          * [await!](#await)
+          * [async](#async)
+      * [non-blocking coroutine](#non-blocking-coroutine)
+          * [aExecutor](#executor)
+          * [block_on](#block_on)
+          * [spawn](#spawn)
+          * [TcpListener](#tcplistener)
+          * [TcpStream](#tcpstream)
+          * [echo server](#echo-server)
+* [Afterword](#afterword)
+
+
+
 ### Introduction
 
 2019 is approaching. The rust team keeps their promise about asynchronous IO: `async` is introduced as keywords, `Pin, Future, Poll` and `await!` is introduced into standard library. 
@@ -1452,4 +1482,3 @@ You can look up source code by yourself if you are interested in it. Next let's 
 The first deficiency I found is, I cannot use `try` in `Future::poll`, which may result in "match hell" when I implement this `trait`. I hope there can be a nice solution in future (eg. implement `Try` for `task::Poll<Result<R, E>>`).
 
 The second deficiency is, we have to construct  `Waker`  from a `NonNull pointer` of `UnsafeWaker`. Of course I can understand the rust team may have token many factors such as performance into their consideration, however, when implementing `UnsafeWaker` by `mio::SetReadiness`, `clone` can be derived and `NonNull` can be unnecessary. I hope there will be another safer alternative because it caused some non-pointer error when I write this project.
-
