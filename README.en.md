@@ -2,7 +2,7 @@
 
 2019 is approaching. The rust team keeps their promise about asynchronous IO: `async` is introduced as keywords, `Pin, Future, Poll` and `await!` is introduced into standard library. 
 
-I have never used rust for asynchronous IO programming before, so I almost know nothing about it. However, I would use it for a project recently but couldn't find many documents that are remarkably helpful for newbie of rust asynchronous programming.
+I have never used rust for asynchronous IO programming earlier, so I almost know nothing about it. However, I would use it for a project recently but couldn't find many documents that are remarkably helpful for newbie of rust asynchronous programming.
 
 Eventually, I wrote several demo and implemented simple asynchronous IO based on `mio` and `coroutine` with the help of both of this blog ([Tokio internals: Understanding Rust's asynchronous I/O framework from the bottom up](https://cafbit.com/post/tokio_internals/)) and source code of "new tokio" [romio](https://github.com/withoutboats/romio) .
 
@@ -1223,4 +1223,233 @@ pub trait Future {
     fn poll(self: Pin<&mut Self>, lw: &LocalWaker) -> Poll<Self::Output>;
 }
 ```
+
+#### Reasonable Abstraction
+
+The second "dark cloud" is relevant to API abstraction.
+
+Now that `rust` chooses `coroutine` as API abstraction of non-blocking IO, what should be introduced into key words,  what should be introduced into standard library and what should be implemented by community? Let developers call unsafe `Generator::resume` is inapposite, using `mio` as the only specified low-level non-blocking IO implementation is also unreasonable.
+
+Up to now, `rust` supports:
+
+- key words
+  - `async`
+- standard libraries
+  - `macro await`
+  - `std::future`
+    - `trait Future`
+    - `trait GenFuture`
+  - `std::task`
+    - `enum Poll<T>`
+    - `struct LocalWaker`
+    - `struct Waker`
+    - `trait UnsafeWaker`
+
+Developer should implement `trait UnsafeWaker` for different waker, you can use `SetReadiness` in `mio` and implement `unsafe fn wake(&self)` by `SetReadiness::set_readiness`. Then you should wrap your waker in `Waker ` and `LocalWaker`.
+
+##### Poll\<T>
+
+`Poll<T>` is defined as:
+
+```rust
+pub enum Poll<T> {
+    Ready(T),
+    Pending,
+}
+```
+
+
+
+ ##### await!
+
+macro `await` can only be used in `async` block or function, should be deliver a `Future`.
+
+`await!(future)` will be expanded into:
+
+```rust
+loop {
+    if let Poll::Ready(x) = ::future::poll_with_tls(unsafe{
+        Pin::new_unchecked(&mut future)
+    }) {
+        break x;
+    }
+    yield
+}
+```
+
+`::future::poll_with_tls` will poll with "thread local waker" via a thread-local variable `TLS_WAKER`.
+
+##### async
+
+`async` is used to wrap a `Generator` into a `GenFuture`. `GenFuture` is defined as:
+
+```rust
+struct GenFuture<T: Generator<Yield = ()>>(T);
+
+impl<T: Generator<Yield = ()>> !Unpin for GenFuture<T> {}
+
+impl<T: Generator<Yield = ()>> Future for GenFuture<T> {
+    type Output = T::Return;
+    fn poll(self: Pin<&mut Self>, lw: &LocalWaker) -> Poll<Self::Output> {
+        set_task_waker(lw, || match unsafe { Pin::get_mut_unchecked(self).0.resume() } {
+            GeneratorState::Yielded(()) => Poll::Pending,
+            GeneratorState::Complete(x) => Poll::Ready(x),
+        })
+    }
+}
+
+pub fn from_generator<T: Generator<Yield = ()>>(x: T) -> impl Future<Output = T::Return> {
+    GenFuture(x)
+}
+```
+
+We can see, `GenFuture` will call `set_task_waker` before calling `self.0.resume`, thus code in generator can get this `LocalWaker` via `TLS_WAKER`.
+
+So, code like this:
+
+```rust
+async fn async_recv(string_channel: Receiver<String>) -> String {
+    await!(string_channel.recv_future())
+}
+```
+
+will be expanded into:
+
+```rust
+fn async_recv(string_channel: Receiver<String>) -> impl Future<Output = T::Return> {
+	from_generator(move || {
+        let recv_future = string_channel.recv_future();
+        loop {
+            if let Poll::Ready(x) = ::future::poll_with_tls(unsafe{
+                Pin::new_unchecked(&mut recv_future)
+            }) {
+                break x;
+            }
+            yield
+        }
+    })
+}
+```
+
+#### non-blocking coroutine
+
+Mastering all the basic knowledge mentioned above, we can do some practices.
+
+`coroutine` doesn't mean "non-blocking", you can invoke blocking API in async blocks or functions. The key to non-blocking IO is, when `GenFuture` is going to block (eg. an API returns `io::ErrorKind::WouldBlock`), register a source task by local waker and sleep (`yield`), lower-level non-blocking scheduler will awake this `GenFuture` after task completed.
+
+In [src/executor.rs](https://github.com/Hexilee/async-io-demo/blob/master/src/executor.rs), I implement `Executor`, `block_on`, `spawn`, `TcpListener` and `TcpStream`. Code is a little long, you had better clone and view it in editor.
+
+> Be careful to distinguish `Poll`(`mio::Poll`) from `task::Poll` and to distinguish  `net::{TcpListener, TcpStream}`(`mio::net::{TcpListener, TcpStream}`) from `TcpListener, TcpStream`
+
+##### Executor
+
+`Executor` is a struct containing `mio::Poll`, main task waker and two `Slab`s for managing `Task` and `Source`. I don't implement any special methods for it, its only duty is to be initialized as thread local variable `EXECUTOR` and to be borrowed by other functions.
+
+##### block_on
+
+This function will block current thread, the only parameter is `main_task: Future<Output=T>`; type of return value is `T`. This function is generally called by main function.
+
+`block_on` borrows thread local variable `EXECUTOR`, its main logic loop will call `mio::Poll::poll` to wait for events. I classify all tokens (`0 - MAX_RESOURCE_NUM(1 << 31)`) into three kinds:
+
+- main task token
+
+  receiving `Token` whose value is `MAIN_TASK_TOKEN (1 << 31)` means main task need be awaked, `main_task.poll` will be called, `block_on` will return `Ok(ret)` if `main_task.poll` returns `task::Poll::Ready(ret)`.
+
+- task token
+
+  odd `Token` means corresponding task (spawned by function `spawn`) need be awaked, `task.poll` will be invoked, `block_on` will return `Err(err)` if `task.poll` returns `Err(err)`.
+
+- source token
+
+  even `Token` means corresponding source (registered by function `register_source`) is completed, `source.task_waker.waker` will be invoked to awake task which registered it.
+
+##### spawn
+
+Function to spawn tasks.
+
+##### TcpListener
+
+`wrapper` for `mio::net::TcpListener`, method `accept` will return a `Future`.
+
+##### TcpStream
+
+`wrapper` for `mio::net::TcpStream`, method `read` and `write` will both return a `Future`.
+
+##### echo server
+
+Implemented `executor`, we can write a simple echo server:
+
+```rust
+// examples/async-echo
+
+#![feature(async_await)]
+#![feature(await_macro)]
+
+#[macro_use]
+extern crate log;
+
+use asyncio::executor::{block_on, spawn, TcpListener};
+use failure::Error;
+
+fn main() -> Result<(), Error> {
+    env_logger::init();
+    block_on(
+        async {
+            let mut listener = TcpListener::bind(&"127.0.0.1:7878".parse()?)?;
+            info!("Listening on 127.0.0.1:7878");
+            while let Ok((mut stream, addr)) = await!(listener.accept()) {
+                info!("connection from {}", addr);
+                spawn(
+                    async move {
+                        let client_hello = await!(stream.read())?;
+                        let read_length = client_hello.len();
+                        let write_length =
+                            await!(stream.write(client_hello))?;
+                        assert_eq!(read_length, write_length);
+                        stream.close();
+                        Ok(())
+                    },
+                )?;
+            };
+            Ok(())
+        },
+    )?
+}
+```
+
+run
+
+```bash
+RUST_LOG=info cargo run --example async-echo
+```
+
+You can test it using `telnet`.
+
+### Afterword
+
+However, to run the example metioned at the beginning, we should implement a non-blocking FS-IO based on `mio`  and `std::future`. Here is the final implementation: [src/fs_future.rs](https://github.com/Hexilee/async-io-demo/blob/master/src/fs_future.rs).
+
+Now, let's run:
+
+```bash
+RUST_LOG=info cargo run --example file-server
+```
+
+Test it using `telnet`:
+
+```:eight_pointed_black_star:
+[~] telnet 127.0.0.1 7878                                                                  
+Trying 127.0.0.1...
+Connected to localhost.
+Escape character is '^]'.
+Please enter filename: examples/test.txt
+Hello, World!
+Connection closed by foreign host.
+```
+
+You can look up source code by yourself if you are interested in it. Next let's talk about the deficiencies of this solution.
+
+The first deficiency I found is, I cannot use `try` in `Future::poll`, which may result in "match hell" when I implement this `trait`. I hope there can be a nice solution in future (eg. implement `Try` for `task::Poll<Result<R, E>>`).
+
+The second deficiency is, we have to construct  `Waker`  from a `NonNull pointer` of `UnsafeWaker`. Of course I can understand the rust team may have token many factors such as performance into their consideration, however, when implementing `UnsafeWaker` by `mio::SetReadiness`, `clone` can be derived and `NonNull` can be unnecessary. I hope there will be another safer alternative because it caused some non-pointer error when I write this project.
 
