@@ -1191,7 +1191,7 @@ fn main() {
 
 那有没有办法通过其它方式来保证能保证它不能被 move 或者取可变引用呢？这就是 `pin`的应用场景了。`pin`具体的内容可以看这篇 [RFC](https://github.com/rust-lang/rfcs/blob/master/text/2349-pin.md)，本文只是简要说明一下。
 
-`rust` 默认给大部分类型实现了 `trait std::marker::Unpin`，这只是一个标记，表示这个类型 move 是安全的，这时候，`Pin<'a, T>` 跟 `&'a mut T` 没有区别，你也可以安全地通过 `Pin::new(&mut T)` 和 `Pin::as_mut(self: &mut Pin<T>)`相互转换。
+`rust` 默认给大部分类型实现了 `trait std::marker::Unpin`，这只是一个标记，表示这个类型 move 是安全的，这时候，`Pin<&'a mut T>` 跟 `&'a mut T` 没有区别，你也可以安全地通过 `Pin::new(&mut T)` 和 `Pin::get_mut(this: Pin<&mut T>)`相互转换。
 
 但对于不能安全 move 的类型，比如上面的 `A`，我们得先把它标记为 `!Unpin`，安全的标记方法是给它一个 `!Unpin`的成员，比如 `Pinned`。
 

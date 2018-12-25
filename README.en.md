@@ -1028,7 +1028,6 @@ Because `rustc` knows the only variable or value need be reserved after the firs
 enum SomeGenerator<'a> {
     ...
     SomeState {
-        _yield: u64,
         x: u64
         ref_x: &'a u64
     }
@@ -1037,4 +1036,191 @@ enum SomeGenerator<'a> {
 ```
 
 
+
+This is the notorious "self-referential structs" in `rust`, what will happen when you try to compile code like this?
+
+```rust
+struct A<'a> {
+    b: u64,
+    ref_b: Option<&'a u64>
+}
+
+impl<'a> A<'a> {
+    fn new() -> Self {
+        let mut a = A{b: 1, ref_b: None};
+		a.ref_b = Some(&a.b);
+        a
+    }
+}
+```
+
+Of course, `rustc` will refuse to compile it. It's reasonable, variable `a` on stack will be copied and dropped and its field ref_b will be invalid when function `new` returns. Lifetime rules of `rust` helps you avoid this memory problem.
+
+However, even if you write code like this:
+
+```rust
+use std::borrow::{BorrowMut};
+
+struct A<'a> {
+    b: u64,
+    ref_b: Option<&'a u64>
+}
+
+impl<'a> A<'a> {
+    fn boxed() -> Box<Self> {
+        let mut a = Box::new(A{b: 1, ref_b: None});
+        let mut_ref: &mut A = a.borrow_mut();
+		mut_ref.ref_b = Some(&mut_ref.b);
+        a
+    }
+}
+```
+
+`rustc` still refuses to compile it. It's unreasonable，variable `a` on heap will not be dropped after function `new` returns, and its field `ref_b` should be always valid. However, `rustc` doesn't know, and you cannot prove it in the language that compiler can understand.
+
+Moreover, you even cannot mutably borrow self-referential structs, like this:
+
+```rust
+struct A<'a> {
+    b: u64,
+    ref_b: Option<&'a u64>
+}
+
+impl<'a> A<'a> {
+    fn new() -> Self {
+        A{b: 1, ref_b: None}
+    }
+
+    fn mute(&mut self) {
+
+    }
+}
+
+fn main() {
+    let mut a = A::new();
+    a.ref_b = Some(&a.b);
+    a.mute();
+}
+```
+
+`rustc` still refuses to compile it. It's awful, because the signature of earlier `Future::poll` is:
+
+```rust
+fn poll(&mut self) -> Poll<Self::Item, Self::Error>;
+```
+
+and the signature of `Generator::resume` is still:
+
+```rust
+unsafe fn resume(&mut self) -> GeneratorState<Self::Yield, Self::Return>;
+```
+
+As a result, self-reference will lead to unable implementation of `trait Generator` and `trait Future` .  In this case, we can use `NonNull` to avoid compiler checking: 
+
+```rust
+use std::ptr::NonNull;
+
+struct A {
+    b: u64,
+    ref_b: NonNull<u64>
+}
+
+impl A {
+    fn new() -> Self {
+        A{b: 1, ref_b: NonNull::dangling()}
+    }
+}
+
+fn main() {
+    let mut a = A::new();
+    a.ref_b = NonNull::from(&a.b);
+}
+```
+
+However, you should guarantee memory safety by yourself (self-referential structs **MUST NOT** be moved, and you **MUST NOT** deliver its mutable reference to `men::replace` or `men::swap`), it's not a nice solution.
+
+Can we find some ways to guarantee its moving and mutably borrowing cannot be safe? `rust` introduces `Pin` to hold this job. Specifications of `pin` can be found in this [RFC](https://github.com/rust-lang/rfcs/blob/master/text/2349-pin.md), this blog will only introduce it simply.
+
+##### Pin
+
+`rust` implement `trait std::marker::Unpin` for almost all types by default. It's only a marker to indicate safely moving of a type. For types marked as `Unpin`, `Pin<&'a mut T>` and `&'a mut T` have no difference, you can safely exchange them by `Pin::new(&mut T)` and `Pin::get_mut(this: Pin<&mut T>)`.
+
+However, for types that cannot be moved safely, like the `A` mentioned earlier, we should mark it as `!Unpin` first, a safe way is to give it a field whose type is marked `!Unpin`, for example, `Pinned`.
+
+```rust
+#![feature(pin)]
+use std::marker::{Pinned};
+
+use std::ptr::NonNull;
+
+struct A {
+    b: u64,
+    ref_b: NonNull<u64>,
+    _pin: Pinned,
+}
+
+impl A {
+    fn new() -> Self {
+        A {
+            b: 1,
+            ref_b: NonNull::dangling(),
+            _pin: Pinned,
+        }
+    }
+}
+
+fn main() {
+    let mut a = A::new();
+    let mut pinned = unsafe { Pin::new_unchecked(&mut a) };
+    let ref_b = NonNull::from(&pinned.b);
+    let mut_ref: Pin<&mut A> = pinned.as_mut();
+    unsafe {Pin::get_mut_unchecked(mut_ref).ref_b = ref_b};
+    let unmoved = pinned;
+    assert_eq!(unmoved.ref_b, NonNull::from(&unmoved.b));
+}
+```
+
+For types marked as `!Unpin`, `Pin<&'a mut T>` and `&'a mut T`  cannot be safely exchanged, you can unsafely exchange them by `Pin::new_unchecked` and `Pin::get_mut_unchecked`. We can always guarantee the safety in the scope we construct it, so after calling two unsafe methods, we can guarantee:
+
+- we can never get mutable reference safely: `Pin::get_mut_unchecked` is unsafe
+- we can never move it: because `Pin` only owns a mutable reference, and `Pin::get_mut_unchecked` is unsafe, so deliver the mutable reference into `men::replace` and `men::swap` is unsafe
+
+Of course, if you don't want to construct `Pin` in unsafe way or you want `Pin` to own the ownership of the instance, you can use `Box::pinned` thus allocate instance on the heap.
+
+```rust
+struct A {
+    b: u64,
+    ref_b: NonNull<u64>,
+    _pin: Pinned,
+}
+
+impl A {
+    fn boxed() -> Pin<Box<Self>> {
+        let mut boxed = Box::pinned(A {
+            b: 1,
+            ref_b: NonNull::dangling(),
+            _pin: Pinned,
+        });
+        let ref_b = NonNull::from(&boxed.b);
+        let mut_ref: Pin<&mut A> = boxed.as_mut();
+        unsafe { Pin::get_mut_unchecked(mut_ref).ref_b = ref_b };
+        boxed
+    }
+}
+
+fn main() {
+    let boxed = A::boxed();
+    let unmoved = boxed;
+    assert_eq!(unmoved.ref_b, NonNull::from(&unmoved.b));
+}
+```
+
+After introducing of `Pin`, the new `Future` is defined as:
+
+```rust
+pub trait Future {
+    type Output;
+    fn poll(self: Pin<&mut Self>, lw: &LocalWaker) -> Poll<Self::Output>;
+}
+```
 
