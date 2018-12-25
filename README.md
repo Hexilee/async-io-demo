@@ -12,7 +12,7 @@ Table of Contents
 * [coroutine](#coroutine)
     * [generator](#generator)
     * [自引用](#自引用)
-    * [Pin](#pin)
+        * [Pin](#pin)
     * [合理的抽象](#合理的抽象)
         * [Poll&lt;T&gt;](#pollt)
         * [await!](#await)
@@ -1042,7 +1042,6 @@ fn no_ref_generator() -> impl Generator<Yield=u64, Return=()> {
 enum SomeGenerator<'a> {
     ...
     SomeState {
-        _yield: u64,
         x: u64
         ref_x: &'a u64
     }
@@ -1188,7 +1187,7 @@ fn main() {
 
 这样的确没有了烦人的生命周期约束，但也意味着你要自己保证内存安全 —— 绝对不能 move，也不能对其可变引用使用 `mem::replace` 或 `mem::swap` ，这样非常不妙。
 
-#### Pin
+##### Pin
 
 那有没有办法通过其它方式来保证能保证它不能被 move 或者取可变引用呢？这就是 `pin`的应用场景了。`pin`具体的内容可以看这篇 [RFC](https://github.com/rust-lang/rfcs/blob/master/text/2349-pin.md)，本文只是简要说明一下。
 

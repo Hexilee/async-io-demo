@@ -9,42 +9,44 @@ Eventually, I wrote several demo and implemented simple asynchronous IO based on
 This is the final file server:
 
 ```rust
-// examples/file-server.rs
+// examples/async-echo.rs
 
 #![feature(async_await)]
 #![feature(await_macro)]
+#![feature(futures_api)]
 
 #[macro_use]
 extern crate log;
 
-use asyncio::executor::{block_on, spawn, TcpListener};
+use asyncio::executor::{block_on, spawn, TcpListener, TcpStream};
 use asyncio::fs_future::{read_to_string};
 use failure::Error;
 
 fn main() -> Result<(), Error> {
     env_logger::init();
-    block_on(
-        async {
-            let mut listener = TcpListener::bind(&"127.0.0.1:7878".parse().unwrap())
-                .expect("TcpListener bind fail");
-            info!("Listening on 127.0.0.1:7878");
-            while let Ok((mut stream, addr)) = await!(listener.accept()) {
-                info!("connection from {}", addr);
-                spawn(
-                    async move {
-                        await!(stream.write_str("Please enter filename: ")).expect("write to stream fail");
-                        let file_name_vec = await!(stream.read()).expect("read from stream fail");
-                        let CRLF: &[char] = &['\r', '\n'];
-                        let file_name = String::from_utf8(file_name_vec).unwrap().trim_matches(CRLF).to_owned();
-                        let file_contents = await!(read_to_string(file_name)).expect("read to string from file fail");
-                        await!(stream.write_str(&file_contents)).expect("write file contents to stream fail");
-                        stream.close();
-                    },
-                )
-                .expect("spawn stream fail");
-            }
-        },
-    )
+    block_on(new_server())?
+}
+
+const CRLF: &[char] = &['\r', '\n'];
+
+async fn new_server() -> Result<(), Error> {
+    let mut listener = TcpListener::bind(&"127.0.0.1:7878".parse()?)?;
+    info!("Listening on 127.0.0.1:7878");
+    while let Ok((stream, addr)) = await!(listener.accept()) {
+        info!("connection from {}", addr);
+        spawn(handle_stream(stream))?;
+    }
+    Ok(())
+}
+
+async fn handle_stream(mut stream: TcpStream) -> Result<(), Error> {
+    await!(stream.write_str("Please enter filename: "))?;
+    let file_name_vec = await!(stream.read())?;
+    let file_name = String::from_utf8(file_name_vec)?.trim_matches(CRLF).to_owned();
+    let file_contents = await!(read_to_string(file_name))?;
+    await!(stream.write_str(&file_contents))?;
+    stream.close();
+    Ok(())
 }
 ```
 
@@ -933,4 +935,106 @@ fn main() -> Result<(), Error> {
 
 
 
-Moreover, there is another problem in rust when we 
+Moreover, there is a lifetime problem in rust when we use closure, which means, we have to clone a environment variable if we want to borrow it in closure (if it implements `Clone`), otherwise we should deliver its reference as a parameter of closure (you should change signature of closure as you need, what a shit!).
+
+Considering a variety of reasons, `rust` eventully uses `coroutine` as its asynchronous API abstraction.
+
+### coroutine
+
+`coroutine` in this blog refers to `stackless coroutine` based on `rust generator` instead of `green thread(stackful coroutine)` which is obsoleted by rust early.
+
+#### generator
+
+`rust` introduced `generator` at May of this year, however, it's still unstable and unsafe. Here is a typical Fibonacci sequence generator:
+
+```rust
+// examples/fab.rs
+
+#![feature(generators, generator_trait)]
+
+use std::ops::{Generator, GeneratorState};
+
+fn main() {
+    let mut gen = fab(5);
+    loop {
+        match unsafe { gen.resume() } {
+            GeneratorState::Yielded(value) => println!("yield {}", value),
+            GeneratorState::Complete(ret) => {
+                println!("return {}", ret);
+                break;
+            }
+        }
+    }
+}
+
+fn fab(mut n: u64) -> impl Generator<Yield=u64, Return=u64> {
+    move || {
+        let mut last = 0u64;
+        let mut current = 1;
+        yield last;
+        while n > 0 {
+            yield current;
+            let tmp = last;
+            last = current;
+            current = tmp + last;
+            n -= 1;
+        }
+        return last;
+    }
+}
+```
+
+Because of the "interrupt behaviors" of `generator`, we will naturally consider to combine it with `mio`: assign a `token` for each `generator`, then poll, resume corresponding `generator` when receive a event; register an awaking event and yield before each generator is going to block. Can we implement non-blocking IO in "synchronous code" on this way?
+
+It seems to work well in theory, but there are still "two dark clouds"。
+
+#### self-referential structs
+
+The first "dark cloud" is relevant to memory management of `rust`.
+
+If you write a `generator` like this:
+
+```rust
+fn self_ref_generator() -> impl Generator<Yield=u64, Return=()> {
+    || {
+        let x: u64 = 1;
+        let ref_x: &u64 = &x;
+        yield 0;
+        yield *ref_x;
+    }
+}
+```
+
+`rustc` will refuse to compile and tell you "borrow may still be in use when generator yields". You may be a little panic because `rustc` doesn't tell you how to fix it. Going to google it, you will find it is relevant to implementation of `generator`.
+
+As memtioned earlier, `generator` is stackless, which means `rustc` doesn't reserve a complete "stack" for each generator, instead, only variables and values required by a specific "state" will be reserved.
+
+This code is valid:
+
+```rust
+fn no_ref_generator() -> impl Generator<Yield=u64, Return=()> {
+    || {
+        let x: u64 = 1;
+        let ref_x: &u64 = &x;
+        yield *ref_x;
+        yield 0;
+    }
+}
+```
+
+Because `rustc` knows the only variable or value need be reserved after the first "yield" is literal `0` . However, for the `self_ref_generator`, `rustc` should reserve both of variable `x` and its reference `ref_x` after the first "yield". In this case, generator should be compiled into a structure like this:
+
+```rust
+enum SomeGenerator<'a> {
+    ...
+    SomeState {
+        _yield: u64,
+        x: u64
+        ref_x: &'a u64
+    }
+    ...
+}
+```
+
+
+
