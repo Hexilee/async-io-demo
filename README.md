@@ -9,7 +9,7 @@ Table of Contents
     * [Still Block](#still-block)
     * [Custom Event](#custom-event)
     * [Callback is Evil](#callback-is-evil)
-* [coroutine](#coroutine)
+* [stackless coroutine](#stackless-coroutine)
     * [generator](#generator)
     * [self-referential structs](#self-referential-structs)
         * [Pin](#pin)
@@ -969,9 +969,9 @@ Moreover, there is a lifetime problem in rust when we use closure, which means, 
 
 Considering a variety of reasons, `rust` eventully uses `coroutine` as its asynchronous API abstraction.
 
-### coroutine
+### stackless coroutine
 
-`coroutine` in this blog refers to `stackless coroutine` based on `rust generator` instead of `green thread(stackful coroutine)` which is obsoleted by rust early.
+`coroutine` in this blog refers to `stackless coroutine` based on `rust generator` instead of `green thread(stackful coroutine)` which is obsoleted by rust earlier.
 
 #### generator
 
