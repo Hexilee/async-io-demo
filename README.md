@@ -1167,7 +1167,7 @@ fn main() {
 }
 ```
 
-However, you should guarantee memory safety by yourself (self-referential structs **MUST NOT** be moved, and you **MUST NOT** deliver its mutable reference to `men::replace` or `men::swap`), it's not a nice solution.
+However, you should guarantee memory safety by yourself (self-referential structs **MUST NOT** be moved, and you **MUST NOT** deliver its mutable reference to `mem::replace` or `mem::swap`), it's not a nice solution.
 
 Can we find some ways to guarantee its moving and mutably borrowing cannot be safe? `rust` introduces `Pin` to hold this job. Specifications of `pin` can be found in this [RFC](https://github.com/rust-lang/rfcs/blob/master/text/2349-pin.md), this blog will only introduce it simply.
 
@@ -1213,7 +1213,7 @@ fn main() {
 For types marked as `!Unpin`, `Pin<&'a mut T>` and `&'a mut T`  cannot be safely exchanged, you can unsafely exchange them by `Pin::new_unchecked` and `Pin::get_mut_unchecked`. We can always guarantee the safety in the scope we construct it, so after calling two unsafe methods, we can guarantee:
 
 - we can never get mutable reference safely: `Pin::get_mut_unchecked` is unsafe
-- we can never move it: because `Pin` only owns a mutable reference, and `Pin::get_mut_unchecked` is unsafe, so deliver the mutable reference into `men::replace` and `men::swap` is unsafe
+- we can never move it: because `Pin` only owns a mutable reference, and `Pin::get_mut_unchecked` is unsafe, so deliver the mutable reference into `mem::replace` and `mem::swap` is unsafe
 
 Of course, if you don't want to construct `Pin` in unsafe way or you want `Pin` to own the ownership of the instance, you can use `Box::pinned` thus allocate instance on the heap.
 
