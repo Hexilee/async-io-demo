@@ -1,6 +1,5 @@
 #![feature(arbitrary_self_types)]
 #![feature(futures_api)]
-#![feature(pin)]
 #![feature(fnbox)]
 
 #[macro_use]
