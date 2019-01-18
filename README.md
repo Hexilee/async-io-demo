@@ -1215,7 +1215,7 @@ For types marked as `!Unpin`, `Pin<&'a mut T>` and `&'a mut T`  cannot be safely
 - we can never get mutable reference safely: `Pin::get_mut_unchecked` is unsafe
 - we can never move it: because `Pin` only owns a mutable reference, and `Pin::get_mut_unchecked` is unsafe, so deliver the mutable reference into `mem::replace` and `mem::swap` is unsafe
 
-Of course, if you don't want to construct `Pin` in unsafe way or you want `Pin` to own the ownership of the instance, you can use `Box::pinned` thus allocate instance on the heap.
+Of course, if you don't want to construct `Pin` in unsafe way or you want `Pin` to own the ownership of the instance, you can use `Box::pin` thus allocate instance on the heap.
 
 ```rust
 struct A {
@@ -1226,7 +1226,7 @@ struct A {
 
 impl A {
     fn boxed() -> Pin<Box<Self>> {
-        let mut boxed = Box::pinned(A {
+        let mut boxed = Box::pin(A {
             b: 1,
             ref_b: NonNull::dangling(),
             _pin: Pinned,
