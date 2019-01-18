@@ -154,7 +154,7 @@ where
     F: Future<Output = R>,
 {
     EXECUTOR.with(move |executor: &Executor| -> Result<R, Error> {
-        let mut pinned_task = Box::pinned(main_task);
+        let mut pinned_task = Box::pin(main_task);
         let mut events = Events::with_capacity(EVENT_CAP);
         let main_waker = executor.main_waker();
         debug!("main_waker addr: {:p}", &main_waker);
@@ -224,7 +224,7 @@ pub fn spawn<F: Future<Output = Result<(), Error>> + 'static>(task: F) -> Result
     EXECUTOR.with(move |executor: &Executor| {
         let (awake_registration, awake_readiness) = Registration::new2();
         let index = executor.tasks.borrow_mut().insert(Task {
-            inner_task: Box::pinned(task),
+            inner_task: Box::pin(task),
             waker: InnerWaker {
                 awake_readiness,
                 awake_registration,
