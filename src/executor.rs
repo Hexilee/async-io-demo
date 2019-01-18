@@ -231,12 +231,13 @@ pub fn spawn<F: Future<Output = Result<(), Error>> + 'static>(task: F) -> Result
             },
         });
         let token = get_task_token(index);
-        let task = &mut executor.tasks.borrow_mut()[index];
+        let mut tasks = executor.tasks.borrow_mut();
+        let task = &mut tasks[index];
         debug!("task({:?}) spawn", token);
         match task.inner_task.as_mut().poll(&task.waker.gen_local_waker()) {
             task::Poll::Ready(_) => {
                 debug!("task({:?}) complete when spawn", token);
-                executor.tasks.borrow_mut().remove(index);
+                tasks.remove(index);
             }
             task::Poll::Pending => {
                 executor.poll.register(
