@@ -82,7 +82,7 @@ async fn handle_stream(mut stream: TcpStream) -> Result<(), Error> {
 
 My purpose of writing this blog is to review and summarize, I will be happy if it can help someone who are interested in rust asynchronous programming. Given that the readability is the primary consideration when I wrote the code appearing in this blog, there may be some performance problem in code, please forgive me. If there are obvious problems in blog or code, you are welcome to point them up.
 
-Most of the code appearing in this blog is collected in this [repo](https://github.com/Hexilee/async-io-demo) (some code is too long, you had better clone and view it in editor), all examples work well at `nightly-x86_64-apple-darwin 2018 Edition, rustc-1.32.0`. 
+Most of the code appearing in this blog is collected in this [repo](https://github.com/Hexilee/async-io-demo) (some code is too long, you had better clone and view it in editor), all examples work well at `nightly-x86_64-apple-darwin 2018 Edition, rustc-1.33.0`. 
 
 > When executing examples/async-echo, set environment variable `RUST_LOG=info` for basic runtime information; set `RUST_LOG=debug`  for events polling information.
 
