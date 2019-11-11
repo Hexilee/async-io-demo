@@ -2,20 +2,19 @@ use failure::Error;
 use mio::*;
 use slab::Slab;
 use std::borrow::Borrow;
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::future::Future;
 use std::io::{self, Read, Write};
 use std::mem::transmute;
 use std::net::SocketAddr;
 use std::pin::Pin;
-use std::ptr::NonNull;
 use std::rc::Rc;
 use std::task::{self, Context, RawWaker, RawWakerVTable, Waker};
 
 const MAX_RESOURCE_NUM: usize = 1 << 31;
 const MAIN_TASK_TOKEN: Token = Token(MAX_RESOURCE_NUM);
 const EVENT_CAP: usize = 1024;
-const POLL_TIME_OUT_MILL: u64 = 100;
+//const POLL_TIME_OUT_MILL: u64 = 100;
 const RAW_WAKER_V_TABLE: RawWakerVTable = RawWakerVTable::new(clone_raw, wake, wake, drop_raw);
 
 const fn get_source_token(index: usize) -> Token {
@@ -104,7 +103,7 @@ fn clone_raw(ptr: *const ()) -> RawWaker {
     RawWaker::new(ptr, &RAW_WAKER_V_TABLE)
 }
 
-fn drop_raw(ptr: *const ()) {}
+fn drop_raw(_ptr: *const ()) {}
 
 fn wake(ptr: *const ()) {
     let readiness: SetReadiness = unsafe { transmute(ptr) };
@@ -193,7 +192,7 @@ where
                                 debug!("source: Index({})", index);
                                 let source = &executor.sources.borrow()[index];
                                 debug!("source addr: {:p}", source);
-                                source.task_waker.wake();
+                                source.waker.wake_by_ref();
                             }
 
                             token if is_task(token) => {
@@ -519,21 +518,30 @@ impl TcpStream {
 
 impl<'a> Future for TcpAcceptState<'a> {
     type Output = Result<(TcpStream, SocketAddr), Error>;
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> task::Poll<<Self as Future>::Output> {
+    fn poll(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> task::Poll<<Self as Future>::Output> {
         self.listener.poll_accept(cx.waker().clone())
     }
 }
 
 impl<'a> Future for StreamReadState<'a> {
     type Output = Result<Vec<u8>, Error>;
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> task::Poll<<Self as Future>::Output> {
+    fn poll(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> task::Poll<<Self as Future>::Output> {
         self.stream.read_poll(cx.waker().clone())
     }
 }
 
 impl<'a> Future for StreamWriteState<'a> {
     type Output = Result<usize, Error>;
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> task::Poll<<Self as Future>::Output> {
+    fn poll(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> task::Poll<<Self as Future>::Output> {
         let data = self.data.clone();
         self.stream.write_poll(data.as_slice(), cx.waker().clone())
     }

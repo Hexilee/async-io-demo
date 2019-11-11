@@ -83,7 +83,10 @@ pub fn read_to_string(file_name: String) -> impl Future<Output = Result<String, 
 
 impl Future for ReadFileState {
     type Output = Result<String, Error>;
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> task::Poll<<Self as Future>::Output> {
+    fn poll(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> task::Poll<<Self as Future>::Output> {
         if let None = self.source_token {
             self.source_token = Some(
                 match register_source(
