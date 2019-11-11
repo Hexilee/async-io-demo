@@ -7,7 +7,7 @@ use std::fs;
 use std::future::Future;
 use std::io;
 use std::pin::Pin;
-use std::task::{self, LocalWaker};
+use std::task::{self, Context};
 use std::thread;
 
 struct BlockTaskWorker {
@@ -83,12 +83,12 @@ pub fn read_to_string(file_name: String) -> impl Future<Output = Result<String, 
 
 impl Future for ReadFileState {
     type Output = Result<String, Error>;
-    fn poll(mut self: Pin<&mut Self>, lw: &LocalWaker) -> task::Poll<<Self as Future>::Output> {
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> task::Poll<<Self as Future>::Output> {
         if let None = self.source_token {
             self.source_token = Some(
                 match register_source(
                     self.registration.take().unwrap(),
-                    lw.clone(),
+                    cx.waker().clone(),
                     Ready::readable(),
                 ) {
                     Ok(token) => token,
@@ -105,7 +105,7 @@ impl Future for ReadFileState {
                 }
                 Err(err) => {
                     debug!("read err {}", &err);
-                    task::Poll::Ready(Err(Error::from(err)))
+                    task::Poll::Ready(Err(err.into()))
                 }
             },
             Err(TryRecvError::Empty) => {
@@ -114,7 +114,7 @@ impl Future for ReadFileState {
             }
             Err(err) => {
                 debug!("read file disconnecting");
-                task::Poll::Ready(Err(Error::from(err)))
+                task::Poll::Ready(Err(err.into()))
             }
         }
     }
