@@ -1,7 +1,7 @@
 use asyncio::fs::fs_async;
 use failure::Error;
 
-const TEST_FILE_VALUE: &str = "Hello, World!";
+const TEST_FILE_VALUE: &str = "Hello, World!\n";
 
 fn main() -> Result<(), Error> {
     let (fs, fs_handler) = fs_async();
