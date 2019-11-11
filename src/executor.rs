@@ -9,7 +9,7 @@ use std::net::SocketAddr;
 use std::pin::Pin;
 use std::ptr::NonNull;
 use std::rc::Rc;
-use std::task::{self, LocalWaker, UnsafeWake, Waker};
+use std::task::{self, RawWaker, RawWakerVTable, Waker, Context};
 
 const MAX_RESOURCE_NUM: usize = 1 << 31;
 const MAIN_TASK_TOKEN: Token = Token(MAX_RESOURCE_NUM);
