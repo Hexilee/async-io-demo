@@ -1,11 +1,12 @@
 #![feature(generators, generator_trait)]
 
 use std::ops::{Generator, GeneratorState};
+use std::pin::Pin;
 
 fn main() {
     let mut gen = fab(5);
     loop {
-        match unsafe { gen.resume() } {
+        match unsafe { Pin::new_unchecked(&mut gen).resume() } {
             GeneratorState::Yielded(value) => println!("yield {}", value),
             GeneratorState::Complete(ret) => {
                 println!("return {}", ret);
@@ -15,7 +16,7 @@ fn main() {
     }
 }
 
-fn fab(mut n: u64) -> impl Generator<Yield=u64, Return=u64> {
+fn fab(mut n: u64) -> impl Generator<Yield = u64, Return = u64> {
     move || {
         let mut last = 0u64;
         let mut current = 1;
