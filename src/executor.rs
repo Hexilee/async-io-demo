@@ -161,7 +161,7 @@ where
         {
             task::Poll::Ready(result) => {
                 debug!("main task complete");
-                return Ok(result);
+                Ok(result)
             }
             task::Poll::Pending => {
                 debug!("main task pending");
@@ -377,7 +377,7 @@ impl TcpListener {
     }
 
     fn poll_accept(&mut self, waker: Waker) -> task::Poll<Result<(TcpStream, SocketAddr), Error>> {
-        if let None = self.accept_source_token {
+        if self.accept_source_token.is_none() {
             self.accept_source_token = Some(
                 match register_source(self.clone(), waker, Ready::readable()) {
                     Ok(token) => token,
@@ -463,11 +463,10 @@ impl TcpStream {
 
             Some(token) => {
                 if !self.readiness.is_readable() {
-                    self.readiness = self.readiness | Ready::readable();
-                    match unsafe { reregister_source(token, self.readiness) } {
-                        Err(err) => return task::Poll::Ready(Err(err)),
-                        Ok(_) => {}
-                    };
+                    self.readiness |= Ready::readable();
+                    if let Err(err) = unsafe { reregister_source(token, self.readiness) } {
+                        return task::Poll::Ready(Err(err));
+                    }
                 }
             }
         }
@@ -499,10 +498,9 @@ impl TcpStream {
 
             Some(token) => {
                 if !self.readiness.is_writable() {
-                    self.readiness = self.readiness | Ready::writable();
-                    match unsafe { reregister_source(token, self.readiness) } {
-                        Err(err) => return task::Poll::Ready(Err(err)),
-                        Ok(_) => {}
+                    self.readiness |= Ready::writable();
+                    if let Err(err) = unsafe { reregister_source(token, self.readiness) } {
+                        return task::Poll::Ready(Err(err));
                     };
                 }
             }

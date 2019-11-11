@@ -87,7 +87,7 @@ impl Future for ReadFileState {
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> task::Poll<<Self as Future>::Output> {
-        if let None = self.source_token {
+        if self.source_token.is_none() {
             self.source_token = Some(
                 match register_source(
                     self.registration.take().unwrap(),

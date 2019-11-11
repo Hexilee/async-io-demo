@@ -18,24 +18,19 @@ pub fn fs_async() -> (Fs, FsHandler) {
     let (task_sender, task_receiver) = unbounded();
     let (result_sender, result_receiver) = unbounded();
     let io_worker = std::thread::spawn(move || {
-        loop {
-            match task_receiver.recv() {
-                Ok(task) => match task {
-                    Task::Println(ref string) => println!("{}", string),
-                    Task::Open(path, callback, fs) => {
-                        result_sender.send(TaskResult::Open(File::open(path)?, callback, fs))?
-                    }
-                    Task::ReadToString(mut file, callback, fs) => {
-                        let mut value = String::new();
-                        file.read_to_string(&mut value)?;
-                        result_sender.send(TaskResult::ReadToString(value, callback, fs))?
-                    }
-                    Task::Exit => {
-                        result_sender.send(TaskResult::Exit)?;
-                        break;
-                    }
-                },
-                Err(_) => {
+        while let Ok(task) = task_receiver.recv() {
+            match task {
+                Task::Println(ref string) => println!("{}", string),
+                Task::Open(path, callback, fs) => {
+                    result_sender.send(TaskResult::Open(File::open(path)?, callback, fs))?
+                }
+                Task::ReadToString(mut file, callback, fs) => {
+                    let mut value = String::new();
+                    file.read_to_string(&mut value)?;
+                    result_sender.send(TaskResult::ReadToString(value, callback, fs))?
+                }
+                Task::Exit => {
+                    result_sender.send(TaskResult::Exit)?;
                     break;
                 }
             }

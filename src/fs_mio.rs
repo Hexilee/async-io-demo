@@ -31,27 +31,22 @@ pub fn fs_async() -> (Fs, FsHandler) {
     )
     .unwrap();
     let io_worker = std::thread::spawn(move || {
-        loop {
-            match task_receiver.recv() {
-                Ok(task) => match task {
-                    Task::Println(ref string) => println!("{}", string),
-                    Task::Open(path, callback, fs) => {
-                        result_sender.send(TaskResult::Open(File::open(path)?, callback, fs))?;
-                        set_readiness.set_readiness(Ready::readable())?;
-                    }
-                    Task::ReadToString(mut file, callback, fs) => {
-                        let mut value = String::new();
-                        file.read_to_string(&mut value)?;
-                        result_sender.send(TaskResult::ReadToString(value, callback, fs))?;
-                        set_readiness.set_readiness(Ready::readable())?;
-                    }
-                    Task::Exit => {
-                        result_sender.send(TaskResult::Exit)?;
-                        set_readiness.set_readiness(Ready::readable())?;
-                        break;
-                    }
-                },
-                Err(_) => {
+        while let Ok(task) = task_receiver.recv() {
+            match task {
+                Task::Println(ref string) => println!("{}", string),
+                Task::Open(path, callback, fs) => {
+                    result_sender.send(TaskResult::Open(File::open(path)?, callback, fs))?;
+                    set_readiness.set_readiness(Ready::readable())?;
+                }
+                Task::ReadToString(mut file, callback, fs) => {
+                    let mut value = String::new();
+                    file.read_to_string(&mut value)?;
+                    result_sender.send(TaskResult::ReadToString(value, callback, fs))?;
+                    set_readiness.set_readiness(Ready::readable())?;
+                }
+                Task::Exit => {
+                    result_sender.send(TaskResult::Exit)?;
+                    set_readiness.set_readiness(Ready::readable())?;
                     break;
                 }
             }
@@ -77,7 +72,7 @@ pub fn fs_async() -> (Fs, FsHandler) {
                                 },
                                 Err(e) => match e {
                                     TryRecvError::Empty => break,
-                                    TryRecvError::Disconnected => Err(e)?,
+                                    TryRecvError::Disconnected => return Err(e.into()),
                                 },
                             }
                         }
