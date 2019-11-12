@@ -1,3 +1,7 @@
+# Update
+
+1.39-stable is published! This project was updated to latest stable version.
+
 Table of Contents
 =================
 
@@ -15,7 +19,7 @@ Table of Contents
         * [Pin](#pin)
     * [Reasonable Abstraction](#reasonable-abstraction)
         * [Poll&lt;T&gt;](#pollt)
-        * [await!](#await)
+        * [await](#await)
         * [async](#async)
     * [non-blocking coroutine](#non-blocking-coroutine)
         * [Executor](#executor)
@@ -30,7 +34,7 @@ Table of Contents
 
 ### Introduction
 
-2019 is approaching. The rust team keeps their promise about asynchronous IO: `async` is introduced as keywords, `Pin, Future, Poll` and `await!` is introduced into standard library. 
+2019 is approaching. The rust team keeps their promise about asynchronous IO: `async` is introduced as keywords, `Pin, Future, Poll` and `await` is introduced into standard library. 
 
 I have never used rust for asynchronous IO programming earlier, so I almost know nothing about it. However, I would use it for a project recently but couldn't find many documents that are remarkably helpful for newbie of rust asynchronous programming.
 
@@ -39,11 +43,7 @@ Eventually, I wrote several demo and implemented simple asynchronous IO based on
 This is the final file server:
 
 ```rust
-// examples/async-echo.rs
-
-#![feature(async_await)]
-#![feature(await_macro)]
-#![feature(futures_api)]
+// examples/file-server.rs
 
 #[macro_use]
 extern crate log;
@@ -57,12 +57,13 @@ fn main() -> Result<(), Error> {
     block_on(new_server())?
 }
 
+
 const CRLF: &[char] = &['\r', '\n'];
 
 async fn new_server() -> Result<(), Error> {
     let mut listener = TcpListener::bind(&"127.0.0.1:7878".parse()?)?;
     info!("Listening on 127.0.0.1:7878");
-    while let Ok((stream, addr)) = await!(listener.accept()) {
+    while let Ok((stream, addr)) = listener.accept().await {
         info!("connection from {}", addr);
         spawn(handle_stream(stream))?;
     }
@@ -70,19 +71,20 @@ async fn new_server() -> Result<(), Error> {
 }
 
 async fn handle_stream(mut stream: TcpStream) -> Result<(), Error> {
-    await!(stream.write_str("Please enter filename: "))?;
-    let file_name_vec = await!(stream.read())?;
+    stream.write_str("Please enter filename: ").await?;
+    let file_name_vec = stream.read().await?;
     let file_name = String::from_utf8(file_name_vec)?.trim_matches(CRLF).to_owned();
-    let file_contents = await!(read_to_string(file_name))?;
-    await!(stream.write_str(&file_contents))?;
+    let file_contents = read_to_string(file_name).await?;
+    stream.write_str(&file_contents).await?;
     stream.close();
     Ok(())
 }
+
 ```
 
 My purpose of writing this blog is to review and summarize, I will be happy if it can help someone who are interested in rust asynchronous programming. Given that the readability is the primary consideration when I wrote the code appearing in this blog, there may be some performance problem in code, please forgive me. If there are obvious problems in blog or code, you are welcome to point them up.
 
-Most of the code appearing in this blog is collected in this [repo](https://github.com/Hexilee/async-io-demo) (some code is too long, you had better clone and view it in editor), all examples work well at `nightly-x86_64-apple-darwin 2018 Edition, rustc-1.33.0`. 
+Most of the code appearing in this blog is collected in this [repo](https://github.com/Hexilee/async-io-demo) (some code is too long, you had better clone and view it in editor), all examples work well at rustc-1.39`. 
 
 > When executing examples/async-echo, set environment variable `RUST_LOG=info` for basic runtime information; set `RUST_LOG=debug`  for events polling information.
 
@@ -597,11 +599,10 @@ The easiest way is using callback, like this:
 // src/fs.rs
 
 use crossbeam_channel::{unbounded, Sender};
+use failure::Error;
 use std::fs::File;
 use std::io::Read;
-use std::boxed::FnBox;
 use std::thread;
-use failure::Error;
 
 #[derive(Clone)]
 pub struct Fs {
@@ -617,29 +618,19 @@ pub fn fs_async() -> (Fs, FsHandler) {
     let (task_sender, task_receiver) = unbounded();
     let (result_sender, result_receiver) = unbounded();
     let io_worker = std::thread::spawn(move || {
-        loop {
-            match task_receiver.recv() {
-                Ok(task) => {
-                    match task {
-                        Task::Println(ref string) => println!("{}", string),
-                        Task::Open(path, callback, fs) => {
-                            result_sender
-                                .send(TaskResult::Open(File::open(path)?, callback, fs))?
-                        }
-                        Task::ReadToString(mut file, callback, fs) => {
-                            let mut value = String::new();
-                            file.read_to_string(&mut value)?;
-                            result_sender
-                                .send(TaskResult::ReadToString(value, callback, fs))?
-                        }
-                        Task::Exit => {
-                            result_sender
-                                .send(TaskResult::Exit)?;
-                            break;
-                        }
-                    }
+        while let Ok(task) = task_receiver.recv() {
+            match task {
+                Task::Println(ref string) => println!("{}", string),
+                Task::Open(path, callback, fs) => {
+                    result_sender.send(TaskResult::Open(File::open(path)?, callback, fs))?
                 }
-                Err(_) => {
+                Task::ReadToString(mut file, callback, fs) => {
+                    let mut value = String::new();
+                    file.read_to_string(&mut value)?;
+                    result_sender.send(TaskResult::ReadToString(value, callback, fs))?
+                }
+                Task::Exit => {
+                    result_sender.send(TaskResult::Exit)?;
                     break;
                 }
             }
@@ -650,15 +641,21 @@ pub fn fs_async() -> (Fs, FsHandler) {
         loop {
             let result = result_receiver.recv()?;
             match result {
-                TaskResult::ReadToString(value, callback, fs) => callback.call_box((value, fs))?,
-                TaskResult::Open(file, callback, fs) => callback.call_box((file, fs))?,
-                TaskResult::Exit => break
+                TaskResult::ReadToString(value, callback, fs) => callback(value, fs)?,
+                TaskResult::Open(file, callback, fs) => callback(file, fs)?,
+                TaskResult::Exit => break,
             };
-        };
+        }
         Ok(())
     });
 
-    (Fs { task_sender }, FsHandler { io_worker, executor })
+    (
+        Fs { task_sender },
+        FsHandler {
+            io_worker,
+            executor,
+        },
+    )
 }
 
 impl Fs {
@@ -667,13 +664,23 @@ impl Fs {
     }
 
     pub fn open<F>(&self, path: &str, callback: F) -> Result<(), Error>
-        where F: FnOnce(File, Fs) -> Result<(), Error> + Sync + Send + 'static {
-        Ok(self.task_sender.send(Task::Open(path.to_string(), Box::new(callback), self.clone()))?)
+    where
+        F: FnOnce(File, Fs) -> Result<(), Error> + Sync + Send + 'static,
+    {
+        Ok(self.task_sender.send(Task::Open(
+            path.to_string(),
+            Box::new(callback),
+            self.clone(),
+        ))?)
     }
 
     pub fn read_to_string<F>(&self, file: File, callback: F) -> Result<(), Error>
-        where F: FnOnce(String, Fs) -> Result<(), Error> + Sync + Send + 'static {
-        Ok(self.task_sender.send(Task::ReadToString(file, Box::new(callback), self.clone()))?)
+    where
+        F: FnOnce(String, Fs) -> Result<(), Error> + Sync + Send + 'static,
+    {
+        Ok(self
+            .task_sender
+            .send(Task::ReadToString(file, Box::new(callback), self.clone()))?)
     }
 
     pub fn close(&self) -> Result<(), Error> {
@@ -688,8 +695,8 @@ impl FsHandler {
     }
 }
 
-type FileCallback = Box<FnBox(File, Fs) -> Result<(), Error> + Sync + Send>;
-type StringCallback = Box<FnBox(String, Fs) -> Result<(), Error> + Sync + Send>;
+type FileCallback = Box<dyn FnOnce(File, Fs) -> Result<(), Error> + Sync + Send>;
+type StringCallback = Box<dyn FnOnce(String, Fs) -> Result<(), Error> + Sync + Send>;
 
 pub enum Task {
     Exit,
@@ -703,7 +710,6 @@ pub enum TaskResult {
     Open(File, FileCallback, Fs),
     ReadToString(String, StringCallback, Fs),
 }
-
 ```
 
 
@@ -714,7 +720,7 @@ pub enum TaskResult {
 use asyncio::fs::fs_async;
 use failure::Error;
 
-const TEST_FILE_VALUE: &str = "Hello, World!";
+const TEST_FILE_VALUE: &str = "Hello, World!\n";
 
 fn main() -> Result<(), Error> {
     let (fs, fs_handler) = fs_async();
@@ -746,13 +752,12 @@ Altering the code above:
 // src/fs_mio.rs
 
 use crossbeam_channel::{unbounded, Sender, TryRecvError};
-use std::fs::File;
-use std::io::{Read};
-use std::boxed::FnBox;
-use std::thread;
 use failure::Error;
-use std::time::Duration;
 use mio::*;
+use std::fs::File;
+use std::io::Read;
+use std::thread;
+use std::time::Duration;
 
 #[derive(Clone)]
 pub struct Fs {
@@ -771,34 +776,30 @@ pub fn fs_async() -> (Fs, FsHandler) {
     let (result_sender, result_receiver) = unbounded();
     let poll = Poll::new().unwrap();
     let (registration, set_readiness) = Registration::new2();
-    poll.register(&registration, FS_TOKEN, Ready::readable(), PollOpt::oneshot()).unwrap();
+    poll.register(
+        &registration,
+        FS_TOKEN,
+        Ready::readable(),
+        PollOpt::oneshot(),
+    )
+    .unwrap();
     let io_worker = std::thread::spawn(move || {
-        loop {
-            match task_receiver.recv() {
-                Ok(task) => {
-                    match task {
-                        Task::Println(ref string) => println!("{}", string),
-                        Task::Open(path, callback, fs) => {
-                            result_sender
-                                .send(TaskResult::Open(File::open(path)?, callback, fs))?;
-                            set_readiness.set_readiness(Ready::readable())?;
-                        }
-                        Task::ReadToString(mut file, callback, fs) => {
-                            let mut value = String::new();
-                            file.read_to_string(&mut value)?;
-                            result_sender
-                                .send(TaskResult::ReadToString(value, callback, fs))?;
-                            set_readiness.set_readiness(Ready::readable())?;
-                        }
-                        Task::Exit => {
-                            result_sender
-                                .send(TaskResult::Exit)?;
-                            set_readiness.set_readiness(Ready::readable())?;
-                            break;
-                        }
-                    }
+        while let Ok(task) = task_receiver.recv() {
+            match task {
+                Task::Println(ref string) => println!("{}", string),
+                Task::Open(path, callback, fs) => {
+                    result_sender.send(TaskResult::Open(File::open(path)?, callback, fs))?;
+                    set_readiness.set_readiness(Ready::readable())?;
                 }
-                Err(_) => {
+                Task::ReadToString(mut file, callback, fs) => {
+                    let mut value = String::new();
+                    file.read_to_string(&mut value)?;
+                    result_sender.send(TaskResult::ReadToString(value, callback, fs))?;
+                    set_readiness.set_readiness(Ready::readable())?;
+                }
+                Task::Exit => {
+                    result_sender.send(TaskResult::Exit)?;
+                    set_readiness.set_readiness(Ready::readable())?;
                     break;
                 }
             }
@@ -815,30 +816,39 @@ pub fn fs_async() -> (Fs, FsHandler) {
                     FS_TOKEN => {
                         loop {
                             match result_receiver.try_recv() {
-                                Ok(result) => {
-                                    match result {
-                                        TaskResult::ReadToString(value, callback, fs) => callback.call_box((value, fs))?,
-                                        TaskResult::Open(file, callback, fs) => callback.call_box((file, fs))?,
-                                        TaskResult::Exit => break 'outer
+                                Ok(result) => match result {
+                                    TaskResult::ReadToString(value, callback, fs) => {
+                                        callback(value, fs)?
                                     }
-                                }
-                                Err(e) => {
-                                    match e {
-                                        TryRecvError::Empty => break,
-                                        TryRecvError::Disconnected => Err(e)?
-                                    }
-                                }
+                                    TaskResult::Open(file, callback, fs) => callback(file, fs)?,
+                                    TaskResult::Exit => break 'outer,
+                                },
+                                Err(e) => match e {
+                                    TryRecvError::Empty => break,
+                                    TryRecvError::Disconnected => return Err(e.into()),
+                                },
                             }
                         }
-                        poll.reregister(&registration, FS_TOKEN, Ready::readable(), PollOpt::oneshot())?;
+                        poll.reregister(
+                            &registration,
+                            FS_TOKEN,
+                            Ready::readable(),
+                            PollOpt::oneshot(),
+                        )?;
                     }
-                    _ => unreachable!()
+                    _ => unreachable!(),
                 }
             }
-        };
+        }
         Ok(())
     });
-    (Fs { task_sender }, FsHandler { io_worker, executor })
+    (
+        Fs { task_sender },
+        FsHandler {
+            io_worker,
+            executor,
+        },
+    )
 }
 
 impl Fs {
@@ -847,13 +857,23 @@ impl Fs {
     }
 
     pub fn open<F>(&self, path: &str, callback: F) -> Result<(), Error>
-        where F: FnOnce(File, Fs) -> Result<(), Error> + Sync + Send + 'static {
-        Ok(self.task_sender.send(Task::Open(path.to_string(), Box::new(callback), self.clone()))?)
+    where
+        F: FnOnce(File, Fs) -> Result<(), Error> + Sync + Send + 'static,
+    {
+        Ok(self.task_sender.send(Task::Open(
+            path.to_string(),
+            Box::new(callback),
+            self.clone(),
+        ))?)
     }
 
     pub fn read_to_string<F>(&self, file: File, callback: F) -> Result<(), Error>
-        where F: FnOnce(String, Fs) -> Result<(), Error> + Sync + Send + 'static {
-        Ok(self.task_sender.send(Task::ReadToString(file, Box::new(callback), self.clone()))?)
+    where
+        F: FnOnce(String, Fs) -> Result<(), Error> + Sync + Send + 'static,
+    {
+        Ok(self
+            .task_sender
+            .send(Task::ReadToString(file, Box::new(callback), self.clone()))?)
     }
 
     pub fn close(&self) -> Result<(), Error> {
@@ -868,8 +888,8 @@ impl FsHandler {
     }
 }
 
-type FileCallback = Box<FnBox(File, Fs) -> Result<(), Error> + Sync + Send>;
-type StringCallback = Box<FnBox(String, Fs) -> Result<(), Error> + Sync + Send>;
+type FileCallback = Box<dyn FnOnce(File, Fs) -> Result<(), Error> + Sync + Send>;
+type StringCallback = Box<dyn FnOnce(String, Fs) -> Result<(), Error> + Sync + Send>;
 
 pub enum Task {
     Exit,
@@ -884,13 +904,12 @@ pub enum TaskResult {
     ReadToString(String, StringCallback, Fs),
 }
 
-
 // examples/fs-mio.rs
 
 use asyncio::fs_mio::fs_async;
 use failure::Error;
 
-const TEST_FILE_VALUE: &str = "Hello, World!";
+const TEST_FILE_VALUE: &str = "Hello, World!\n";
 
 fn main() -> Result<(), Error> {
     let (fs, fs_handler) = fs_async();
@@ -904,7 +923,6 @@ fn main() -> Result<(), Error> {
     fs_handler.join()?;
     Ok(())
 }
-
 ```
 
 
@@ -919,7 +937,7 @@ cargo run --example fs-mio
 
 We can see the difference between two implementations. On the one hand, executor will never be blocking by `result_receiver.recv()`, instead, it will wait for `Poll::poll` returning; on the other hand, io worker thread will execute `set_readiness.set_readiness(Ready::readable())?` after executing `result_sender.send`, to inform executor there are some events happens.
 
-In this case, executor will never be blocked by io worker, because we can register all events in executor, and `mio::Poll` will listen to all events (eg, combine `fs-mio` with `tcp` into a file server).
+In this case, executor will never be blocked by io worker, because we can register all events in executor, and `mio::Poll` will listen to all events (eg. combine `fs-mio` with `tcp` into a file server).
 
 
 
@@ -971,7 +989,7 @@ Considering a variety of reasons, `rust` eventully uses `coroutine` as its async
 
 ### stackless coroutine
 
-`coroutine` in this blog refers to `stackless coroutine` based on `rust generator` instead of `green thread(stackful coroutine)` which is obsoleted by rust earlier.
+`coroutine` in this blog refers to `stackless coroutine` based on `rust generator` instead of `green thread(stackful coroutine)` which is obsoleted earlier.
 
 #### generator
 
@@ -979,15 +997,17 @@ Considering a variety of reasons, `rust` eventully uses `coroutine` as its async
 
 ```rust
 // examples/fab.rs
+// cargo +nightly run --example fab
 
 #![feature(generators, generator_trait)]
 
 use std::ops::{Generator, GeneratorState};
+use std::pin::Pin;
 
 fn main() {
     let mut gen = fab(5);
     loop {
-        match unsafe { gen.resume() } {
+        match unsafe { Pin::new_unchecked(&mut gen).resume() } {
             GeneratorState::Yielded(value) => println!("yield {}", value),
             GeneratorState::Complete(ret) => {
                 println!("return {}", ret);
@@ -997,7 +1017,7 @@ fn main() {
     }
 }
 
-fn fab(mut n: u64) -> impl Generator<Yield=u64, Return=u64> {
+fn fab(mut n: u64) -> impl Generator<Yield = u64, Return = u64> {
     move || {
         let mut last = 0u64;
         let mut current = 1;
@@ -1012,6 +1032,7 @@ fn fab(mut n: u64) -> impl Generator<Yield=u64, Return=u64> {
         return last;
     }
 }
+
 ```
 
 Because of the "interrupt behaviors" of `generator`, we will naturally consider to combine it with `mio`: assign a `token` for each `generator`, then poll, resume corresponding `generator` when receive a event; register an awaking event and yield before each generator is going to block. Can we implement non-blocking IO in "synchronous code" on this way?
@@ -1250,7 +1271,7 @@ After introducing of `Pin`, the new `Future` is defined as:
 ```rust
 pub trait Future {
     type Output;
-    fn poll(self: Pin<&mut Self>, lw: &LocalWaker) -> Poll<Self::Output>;
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output>;
 }
 ```
 
@@ -1264,18 +1285,18 @@ Up to now, `rust` supports:
 
 - key words
   - `async`
+  - `await`
 - standard libraries
-  - `macro await`
   - `std::future`
     - `trait Future`
     - `trait GenFuture`
   - `std::task`
     - `enum Poll<T>`
-    - `struct LocalWaker`
+    - `struct Context`
     - `struct Waker`
-    - `trait UnsafeWaker`
+    - `struct RawWaker`
 
-Developer should implement `trait UnsafeWaker` for different waker, you can use `SetReadiness` in `mio` and implement `unsafe fn wake(&self)` by `SetReadiness::set_readiness`. Then you should wrap your waker in `Waker ` and `LocalWaker`.
+`RawWaker` consists of an data ptr and a virtual table, you can construct one with `SetReadiness` and implement `fn wake(*const ())` by `SetReadiness::set_readiness`. Then you should wrap your raw waker in `Waker ` and `Context`.
 
 ##### Poll\<T>
 
@@ -1290,15 +1311,15 @@ pub enum Poll<T> {
 
 
 
- ##### await!
+ ##### await
 
-macro `await` can only be used in `async` block or function, should be deliver a `Future`.
+ `await` is the first suffix keyword in rust, which can only be used in `async` block or function.
 
-`await!(future)` will be expanded into:
+`future.await` will be expanded into:
 
 ```rust
 loop {
-    if let Poll::Ready(x) = ::future::poll_with_tls(unsafe{
+    if let Poll::Ready(x) = std::future::poll_with_tls_context(unsafe{
         Pin::new_unchecked(&mut future)
     }) {
         break x;
@@ -1307,7 +1328,7 @@ loop {
 }
 ```
 
-`::future::poll_with_tls` will poll with "thread local waker" via a thread-local variable `TLS_WAKER`.
+`std::future::poll_with_tls_context` will poll with "thread local context" via a thread-local variable `TLS_CX`.
 
 ##### async
 
@@ -1320,8 +1341,9 @@ impl<T: Generator<Yield = ()>> !Unpin for GenFuture<T> {}
 
 impl<T: Generator<Yield = ()>> Future for GenFuture<T> {
     type Output = T::Return;
-    fn poll(self: Pin<&mut Self>, lw: &LocalWaker) -> Poll<Self::Output> {
-        set_task_waker(lw, || match unsafe { Pin::get_mut_unchecked(self).0.resume() } {
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let gen = unsafe { Pin::map_unchecked_mut(self, |s| &mut s.0) };
+        set_task_context(cx, || match gen.resume() {
             GeneratorState::Yielded(()) => Poll::Pending,
             GeneratorState::Complete(x) => Poll::Ready(x),
         })
@@ -1333,13 +1355,13 @@ pub fn from_generator<T: Generator<Yield = ()>>(x: T) -> impl Future<Output = T:
 }
 ```
 
-We can see, `GenFuture` will call `set_task_waker` before calling `self.0.resume`, thus code in generator can get this `LocalWaker` via `TLS_WAKER`.
+We can see, `GenFuture` will call `set_task_context` before calling `self.0.resume`, thus code in generator can get this `Context` via `TLS_CX`.
 
 So, code like this:
 
 ```rust
 async fn async_recv(string_channel: Receiver<String>) -> String {
-    await!(string_channel.recv_future())
+    await(string_channel.recv_future())
 }
 ```
 
@@ -1350,7 +1372,7 @@ fn async_recv(string_channel: Receiver<String>) -> impl Future<Output = T::Retur
 	from_generator(move || {
         let recv_future = string_channel.recv_future();
         loop {
-            if let Poll::Ready(x) = ::future::poll_with_tls(unsafe{
+            if let Poll::Ready(x) = std::future::poll_with_tls_context(unsafe{
                 Pin::new_unchecked(&mut recv_future)
             }) {
                 break x;
@@ -1412,9 +1434,6 @@ Implemented `executor`, we can write a simple echo server:
 ```rust
 // examples/async-echo
 
-#![feature(async_await)]
-#![feature(await_macro)]
-
 #[macro_use]
 extern crate log;
 
@@ -1427,14 +1446,14 @@ fn main() -> Result<(), Error> {
         async {
             let mut listener = TcpListener::bind(&"127.0.0.1:7878".parse()?)?;
             info!("Listening on 127.0.0.1:7878");
-            while let Ok((mut stream, addr)) = await!(listener.accept()) {
+            while let Ok((mut stream, addr)) = listener.accept().await {
                 info!("connection from {}", addr);
                 spawn(
                     async move {
-                        let client_hello = await!(stream.read())?;
+                        let client_hello = stream.read().await?;
                         let read_length = client_hello.len();
                         let write_length =
-                            await!(stream.write(client_hello))?;
+                            stream.write(client_hello).await?;
                         assert_eq!(read_length, write_length);
                         stream.close();
                         Ok(())
@@ -1467,7 +1486,7 @@ RUST_LOG=info cargo run --example file-server
 
 Test it using `telnet`:
 
-```:eight_pointed_black_star:
+```bash
 [~] telnet 127.0.0.1 7878                                                                  
 Trying 127.0.0.1...
 Connected to localhost.
@@ -1477,8 +1496,4 @@ Hello, World!
 Connection closed by foreign host.
 ```
 
-You can look up source code by yourself if you are interested in it. Next let's talk about the deficiencies of this solution.
-
-The first deficiency I found is, I cannot use `try` in `Future::poll`, which may result in "match hell" when I implement this `trait`. I hope there can be a nice solution in future (eg. implement `Try` for `task::Poll<Result<R, E>>`).
-
-The second deficiency is, we have to construct  `Waker`  from a `NonNull pointer` of `UnsafeWaker`. Of course I can understand the rust team may have token many factors such as performance into their consideration, however, when implementing `UnsafeWaker` by `mio::SetReadiness`, `clone` can be derived and `NonNull` can be unnecessary. I hope there will be another safer alternative because it caused some non-pointer error when I write this project.
+You can look up source code by yourself if you are interested in it.
