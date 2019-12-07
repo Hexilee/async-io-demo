@@ -1361,7 +1361,7 @@ So, code like this:
 
 ```rust
 async fn async_recv(string_channel: Receiver<String>) -> String {
-    await(string_channel.recv_future())
+    string_channel.recv_future().await
 }
 ```
 
