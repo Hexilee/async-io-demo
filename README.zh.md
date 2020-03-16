@@ -580,7 +580,7 @@ pub enum Task {
 #### 自定义事件
 
 
-上面我们实现异步 `println` 比较简单，这是因为 `println` 并没有返回值，不需要进行后续操作。设想一下，如果要我们实现 `open` 和 `ready_to_string`，先异步地 `open` 一个文件，然后异步地 `read_to_string`，最后再异步地 `println`, 我们要怎么做？
+上面我们实现异步 `println` 比较简单，这是因为 `println` 并没有返回值，不需要进行后续操作。设想一下，如果要我们实现 `open` 和 `read_to_string`，先异步地 `open` 一个文件，然后异步地 `read_to_string`，最后再异步地 `println`, 我们要怎么做？
 
 最简单的写法是回调，像这样：
 
