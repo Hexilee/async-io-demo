@@ -1,7 +1,3 @@
-# Update
-
-1.39-stable is published! This project was updated to latest stable version.
-
 Table of Contents
 =================
 
